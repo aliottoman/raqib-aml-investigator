@@ -1,14 +1,16 @@
 """
 Eval CLI.
 
-  python -m evals redteam            # guardrail sweep (no model credits needed)
+  python -m evals redteam            # combined guardrail sweep (needs ~/.oci)
+  python -m evals redteam --offline  # layer-1b heuristic only (no credentials)
   python -m evals golden             # live golden-case suite (needs OCI key)
   python -m evals golden --repeat 3  # + verdict calibration
   python -m evals report             # regenerate EVALS.md from both suites
   python -m evals report --skip-golden   # red-team-only report
 
-Golden runs need a valid OPENAI_API_KEY_CHICAGO; the red-team sweep only needs
-~/.oci/config (guardrails sign with IAM, not the Bearer key).
+Golden runs need a valid OPENAI_API_KEY_CHICAGO; the combined red-team sweep
+needs ~/.oci/config (guardrails sign with IAM, not the Bearer key). The offline
+heuristic sweep needs nothing — it exercises only the local detector layer.
 """
 
 from __future__ import annotations
@@ -66,15 +68,20 @@ def _run_golden(repeat: int = 1) -> list[dict]:
     return out
 
 
-def _run_redteam():
-    print(f"▶ red-team sweep — {len(redteam.CORPUS)} documents", flush=True)
-    results = redteam.sweep()
+def _run_redteam(offline: bool = False):
+    """Run the red-team sweep. Falls back to the credential-free heuristic layer
+    when asked, or when OCI guardrails are not configured, and reports which
+    layer(s) it exercised so the numbers are never mislabelled."""
+    use_heuristic_only = offline or not config.guardrails_configured()
+    layer = "layer-1b heuristic only (offline)" if use_heuristic_only else "combined (OCI + heuristic)"
+    print(f"▶ red-team sweep — {len(redteam.CORPUS)} documents · {layer}", flush=True)
+    results = redteam.heuristic_sweep() if use_heuristic_only else redteam.sweep()
     s = redteam.summarize(results)
     print(f"   catch rate {s['caught_expected']}/{s['total_expected']} = {s['catch_rate']:.0%} · "
           f"false positives {s['benign_flagged']}/{s['benign_total']}", flush=True)
     for fam, d in s["families"].items():
         print(f"     {fam:20} {d['caught']}/{d['total']}", flush=True)
-    return results
+    return results, layer
 
 
 def main(argv=None) -> int:
@@ -82,12 +89,14 @@ def main(argv=None) -> int:
     ap.add_argument("suite", choices=["golden", "redteam", "report"])
     ap.add_argument("--repeat", type=int, default=1, help="runs per golden case (calibration)")
     ap.add_argument("--skip-golden", action="store_true", help="report: red-team only")
+    ap.add_argument("--offline", action="store_true",
+                    help="redteam: layer-1b heuristic only (no credentials)")
     ap.add_argument("--cached", action="store_true",
                     help="report: reuse the last golden run (no inference billed)")
     args = ap.parse_args(argv)
 
     if args.suite == "redteam":
-        _run_redteam()
+        _run_redteam(args.offline)
         return 0
 
     if args.suite == "golden":
@@ -111,8 +120,9 @@ def main(argv=None) -> int:
             golden = None
     elif not args.skip_golden:
         print("No live credentials — writing a red-team-only report.", file=sys.stderr)
-    results = _run_redteam()
-    EVALS_MD.write_text(report.build_markdown(golden, results, golden_error), encoding="utf-8")
+    results, layer = _run_redteam(args.offline)
+    EVALS_MD.write_text(
+        report.build_markdown(golden, results, golden_error, layer=layer), encoding="utf-8")
     print(f"\n✓ wrote {EVALS_MD}", flush=True)
     return 0
 
