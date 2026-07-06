@@ -65,9 +65,11 @@ def isolated_runtime(request: pytest.FixtureRequest, tmp_path: Path, monkeypatch
     monkeypatch.setattr(oci_clients, "xai_tools", _unexpected_live_call)
 
     knowledge._index = None
+    knowledge._managed_store_id = None
     bankdb.build(config.DB_PATH)
     yield
     knowledge._index = None
+    knowledge._managed_store_id = None
 
 
 @pytest.fixture

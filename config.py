@@ -18,11 +18,12 @@ The two base URLs matter (verified on this tenancy, July 2026):
   web_search only works here, and only for grok models. Raqib wraps it
   as the adverse-media screening step.
 
-OCI now offers managed Vector Stores and File Search. This reference solution
-deliberately retains OCI embeddings + local cosine search so demo mode stays
-portable and retrieval remains deterministic. USE_MANAGED_VECTOR_STORES marks
-the adapter point for a future managed retrieval implementation; it is not an
-active implementation switch yet.
+OCI now offers managed Vector Stores and File Search. Both retrieval backends
+are implemented behind one search() contract (see src/knowledge.py); local
+OCI-embeddings + cosine search stays the default so demo mode is portable and
+retrieval deterministic. Flip USE_MANAGED_VECTOR_STORES (env
+RAQIB_USE_MANAGED_VECTOR_STORES) to serve policy retrieval from a managed
+Vector Store / File Search instead.
 
 Run modes
 ---------
@@ -85,7 +86,23 @@ EMBED_MODEL = os.getenv("RAQIB_EMBED_MODEL", "cohere.embed-multilingual-v3.0")
 # --------------------------------------------------------------------------- #
 #  Feature flags / tuning
 # --------------------------------------------------------------------------- #
-USE_MANAGED_VECTOR_STORES = False   # reserved adapter point; local retrieval is implemented
+def _flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Managed retrieval (Track B). When true, search_aml_policy is served by an OCI
+# Generative AI Vector Store / File Search instead of local cosine search. The
+# local path stays the default so demo mode is portable and tests are
+# deterministic. The public search() contract is identical for both backends.
+USE_MANAGED_VECTOR_STORES = _flag("RAQIB_USE_MANAGED_VECTOR_STORES", False)
+# Point at a pre-provisioned store to skip in-process provisioning; otherwise
+# the managed backend provisions one on first use and caches its id.
+VECTOR_STORE_ID = os.getenv("RAQIB_VECTOR_STORE_ID", "")
+VECTOR_STORE_NAME = os.getenv("RAQIB_VECTOR_STORE_NAME", "raqib-aml-policy")
+
 MAX_AGENT_STEPS = 12                # hard ceiling on tool-loop iterations
 LIVE_TIMEOUT_S = 180                # per model call
 
@@ -114,3 +131,8 @@ def live_configured() -> bool:
 def guardrails_configured() -> bool:
     """Guardrails signs with ~/.oci config (not the Bearer key)."""
     return os.path.exists(os.path.expanduser(os.getenv("OCI_CONFIG_FILE", "~/.oci/config")))
+
+
+def retrieval_backend() -> str:
+    """Which policy-retrieval backend search_aml_policy uses."""
+    return "managed" if USE_MANAGED_VECTOR_STORES else "local"
