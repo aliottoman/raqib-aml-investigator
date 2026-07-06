@@ -64,7 +64,7 @@ export default function Shell({ path, role, setRole, health, children }) {
     <div className="app-shell">
       <aside className="sidebar">
         <Link to="/overview" className="wordmark" aria-label="Raqib home">
-          <span className="brand-seal">R</span>
+          <span className="brand-seal"><img src="/brand/raqib-mark.svg" alt="" /></span>
           <span><strong>Raqib</strong><small>رقيب</small></span>
         </Link>
         <nav aria-label="Primary navigation">
@@ -82,7 +82,7 @@ export default function Shell({ path, role, setRole, health, children }) {
 
       <div className="shell-body">
         <header className="appbar">
-          <div className="mobile-brand"><span className="brand-seal">R</span><strong>Raqib</strong></div>
+          <div className="mobile-brand"><span className="brand-seal"><img src="/brand/raqib-mark.svg" alt="" /></span><strong>Raqib</strong></div>
           <div className="location"><span>Financial Crime Operations</span><strong>{currentLabel}</strong></div>
           <div className="appbar-actions">
             <span className="demo-badge">Synthetic data</span>

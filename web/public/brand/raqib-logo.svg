@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Raqib logo</title>
+  <desc id="desc">An abstract governed-observer mark above the bilingual Raqib wordmark.</desc>
+
+  <rect width="1000" height="1000" fill="#F3EFE7"/>
+
+  <!-- Governed-observer mark: two controlled boundaries around a human checkpoint. -->
+  <g fill="#20231F">
+    <path d="M377 205H505C431 244 397 306 397 387v17c0 73 28 132 86 174-70-25-106-80-106-166V205Z"/>
+    <path d="M623 557H495c74-39 108-101 108-182v-17c0-73-28-132-86-174 70 25 106 80 106 166v207Z" transform="translate(0 0)"/>
+  </g>
+  <circle cx="500" cy="381" r="31" fill="#B95736"/>
+
+  <!-- Latin wordmark -->
+  <text x="500" y="720"
+        fill="#20231F"
+        font-family="Iowan Old Style, Charter, Palatino Linotype, Georgia, serif"
+        font-size="142"
+        font-weight="500"
+        letter-spacing="-7"
+        text-anchor="middle"
+        aria-label="Raqib">Raqıb</text>
+
+  <!-- Single terracotta-orange i dot. -->
+  <circle cx="551" cy="619" r="9" fill="#B95736"/>
+
+</svg>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="260 141 480 480" role="img" aria-label="Raqib">
+  <title>Raqib mark</title>
+  <!-- The governed-observer mark from raqib-logo.svg, isolated as a square tile
+       (same paths, cropped viewBox) for favicons and the compact brand seal. -->
+  <rect x="260" y="141" width="480" height="480" fill="#F3EFE7"/>
+  <g fill="#20231F">
+    <path d="M377 205H505C431 244 397 306 397 387v17c0 73 28 132 86 174-70-25-106-80-106-166V205Z"/>
+    <path d="M623 557H495c74-39 108-101 108-182v-17c0-73-28-132-86-174 70 25 106 80 106 166v207Z"/>
+  </g>
+  <circle cx="500" cy="381" r="31" fill="#B95736"/>
+</svg>
