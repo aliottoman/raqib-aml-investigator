@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+openai
+oci
+pydantic
+python-dotenv
+reportlab
+arabic-reshaper
+python-bidi
