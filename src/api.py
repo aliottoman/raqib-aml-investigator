@@ -10,6 +10,7 @@ that clearly so it cannot be mistaken for real authentication.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -22,13 +23,18 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config
-from src import bankdb, store
-from src.schemas import CaseTransition, NoteCreate, RuleSimulation, RuleUpdate, SARReview, ev
+from src import bankdb, runs, store
+from src.schemas import (ApprovalDecision, CaseTransition, NoteCreate, RuleSimulation,
+                         RuleUpdate, SARReview, ev)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     store.ensure_schema()
+    # A run left "running" cannot have a live driver after a restart. Close the
+    # orphans honestly and start this process with a clean run registry.
+    store.reconcile_stale_runs()
+    runs.manager.reset()
     yield
 
 
@@ -140,6 +146,7 @@ def health() -> dict:
         "orchestrator_model": config.ORCHESTRATOR_MODEL,
         "region": config.REGION,
         "persistence": "sqlite",
+        "retrieval": config.retrieval_backend(),
         "auth_mode": "simulated_personas",
     }
 
@@ -242,6 +249,43 @@ def case_events(case_id: str, after: int = 0, limit: int = Query(default=500, ge
     rows = store.list_events(case_id, after=after, limit=limit)
     return {"case_id": case_id, "events": rows, "total": len(rows),
             "next_after": rows[-1]["event_id"] if rows else after}
+
+
+@app.get("/api/cases/{case_id}/runs")
+def case_runs(case_id: str) -> dict:
+    _case_or_404(case_id)
+    rows = store.list_runs(case_id)
+    for row in rows:
+        row["live"] = runs.manager.is_active(row["id"])
+    active = next((r["id"] for r in rows if r["live"]), None)
+    return {"case_id": case_id, "runs": rows, "total": len(rows), "active_run_id": active}
+
+
+@app.post("/api/runs/{run_id}/cancel")
+async def cancel_run(run_id: str, role: str = Depends(require_roles("analyst"))) -> dict:
+    try:
+        run = store.get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(404, f"Unknown run: {run_id}") from exc
+    if runs.manager.cancel(run_id):
+        return {"run_id": run_id, "status": "cancelling"}
+    # Not driven by this process: report its durable status without pretending
+    # to have stopped anything.
+    return {"run_id": run_id, "status": run["status"], "note": "Run is not active on this instance."}
+
+
+@app.post("/api/runs/{run_id}/approvals")
+async def decide_run_approval(run_id: str, body: ApprovalDecision,
+                              role: str = Depends(require_roles("analyst"))) -> dict:
+    try:
+        store.get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(404, f"Unknown run: {run_id}") from exc
+    outcome = runs.manager.decide(
+        run_id, {"approve": body.approve, "call_id": body.call_id, "run_id": run_id}, role)
+    if not outcome["accepted"]:
+        raise HTTPException(409, "No pending approval for this run.")
+    return {"run_id": run_id, "approved": outcome["approved"]}
 
 
 @app.post("/api/cases/{case_id}/notes", status_code=201)
@@ -500,8 +544,22 @@ def architecture() -> dict:
     }
 
 
+def _safe_int(value: str | None, default: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 @app.websocket("/ws/investigate")
 async def ws_investigate(ws: WebSocket) -> None:
+    """Subscribe a socket to an investigation run.
+
+    Without ``run`` a fresh run is created and started; with ``run`` (and an
+    optional ``after`` cursor) the socket reconnects to an existing run,
+    replaying persisted events past the cursor and then streaming live ones.
+    The run itself lives in the RunManager, decoupled from this socket.
+    """
     await ws.accept()
     role = ws.query_params.get("role", "analyst").strip().lower()
     if role not in ROLE_INFO:
@@ -513,127 +571,93 @@ async def ws_investigate(ws: WebSocket) -> None:
         await ws.close(code=1008)
         return
 
-    engine = ws.query_params.get("engine", "auto")
-    alert_id = ws.query_params.get("case", bankdb.ALERT_ID)
-    if engine not in {"auto", "demo", "live"}:
-        await ws.send_json(ev("error", message=f"Unknown investigation engine '{engine}'"))
-        await ws.close(code=1008)
-        return
-    if engine == "auto":
-        engine = "live" if config.live_configured() else "demo"
-    try:
-        _ensure_alert(alert_id)
-    except HTTPException as exc:
-        await ws.send_json(ev("error", message=str(exc.detail)))
-        await ws.close(code=1008)
-        return
-    if engine == "demo" and alert_id != bankdb.ALERT_ID:
-        await ws.send_json(ev(
-            "error", message=f"Demo mode replays {bankdb.ALERT_ID}. Configure live credentials for other cases."
-        ))
-        await ws.close(code=1008)
-        return
+    resume_run_id = ws.query_params.get("run")
+    after = _safe_int(ws.query_params.get("after"), 0)
 
-    run = store.start_run(alert_id, engine, role)
-    run_id = run["id"]
-    pending_call_id: str | None = None
-    decisions: dict[str, bool] = {}
-
-    async def ask() -> dict:
-        nonlocal pending_call_id
+    if resume_run_id:
         try:
-            decision = await ws.receive_json()
-        except Exception:
-            decision = {"approve": False}
-        call_id = pending_call_id
-        if not call_id:
-            return {"approve": False}
-        supplied_call = decision.get("id") or decision.get("call_id")
-        supplied_run = decision.get("run_id")
-        identifiers_match = ((supplied_call is None or supplied_call == call_id)
-                             and (supplied_run is None or supplied_run == run_id))
-        approved = bool(decision.get("approve", False)) and identifiers_match
-        recorded = store.decide_approval(run_id, call_id, approved, role)
-        approved = approved and recorded
-        decisions[call_id] = approved
-        return {"approve": approved, "call_id": call_id, "run_id": run_id}
-
-    if engine == "demo":
-        from src import demo_tape
-        runner = demo_tape.play(ask)
+            run_row = store.get_run(resume_run_id)
+        except KeyError:
+            await ws.send_json(ev("error", message=f"Unknown run '{resume_run_id}'"))
+            await ws.close(code=1008)
+            return
+        alert_id = run_row["case_id"]
+        run_id = resume_run_id
     else:
-        from src import agent
-        runner = agent.investigate(ask, alert_id)
-
-    pending_sar: dict | None = None
-    pii_hits: list[dict] | None = None
-
-    async def send_event(event: dict) -> None:
-        enriched = {**event, "run_id": run_id}
-        event_id = store.append_event(
-            alert_id, event.get("type", "unknown"), enriched, run_id=run_id,
-            actor_role=role, call_id=event.get("id"),
-        )
-        enriched["event_id"] = event_id
-        await ws.send_json(enriched)
-
-    async def release_sar(event: dict) -> None:
-        # save_sar validates the structured contract before the UI sees it.
-        saved = store.save_sar(
-            alert_id, event["report"], actor_role=role, pii_hits=pii_hits or [], source_run_id=run_id
-        )
-        await send_event({**event, "version": saved["version"], "status": saved["status"]})
-
-    try:
-        async for raw_event in runner:
-            event = dict(raw_event)
-            kind = event.get("type")
-            if kind == "approval_request":
-                pending_call_id = event.get("id")
-                event["run_id"] = run_id
-                store.request_approval(
-                    alert_id, run_id, pending_call_id or "unknown", event.get("sql", ""), event.get("purpose", "")
-                )
-            elif kind == "approval_result":
-                call_id = event.get("id")
-                if call_id in decisions:
-                    event["approved"] = decisions[call_id]
-                pending_call_id = None
-            elif kind == "memory":
-                store.update_run(run_id, conversation_id=event.get("conversation_id"))
-            elif kind == "step":
-                store.update_run(run_id, current_step=int(event.get("n", 0)))
-
-            # The recorded v1 tape emits SAR then PII.  Buffering makes both
-            # demo and live modes obey PII-before-release without rewriting
-            # historical evidence.
-            if kind == "sar":
-                pending_sar = event
-                if pii_hits is not None:
-                    await release_sar(pending_sar)
-                    pending_sar = None
-                continue
-            if kind == "pii":
-                pii_hits = event.get("hits", [])
-                await send_event(event)
-                if pending_sar is not None:
-                    await release_sar(pending_sar)
-                    pending_sar = None
-                continue
-
-            if kind == "done" and pending_sar is not None:
-                # A missing output scan is a failed governance check: do not
-                # expose or persist the report.
-                await send_event(ev("error", message="SAR output scan did not complete; draft was withheld."))
-                pending_sar = None
-            await send_event(event)
-        store.update_run(run_id, status="completed")
-    except WebSocketDisconnect:
-        store.update_run(run_id, status="interrupted", error="Client disconnected")
-    except Exception as exc:
-        store.update_run(run_id, status="failed", error=str(exc)[:1000])
+        engine = ws.query_params.get("engine", "auto")
+        alert_id = ws.query_params.get("case", bankdb.ALERT_ID)
+        if engine not in {"auto", "demo", "live"}:
+            await ws.send_json(ev("error", message=f"Unknown investigation engine '{engine}'"))
+            await ws.close(code=1008)
+            return
+        if engine == "auto":
+            engine = "live" if config.live_configured() else "demo"
         try:
-            await send_event(ev("error", message=f"Investigation could not complete: {exc}"))
+            _ensure_alert(alert_id)
+        except HTTPException as exc:
+            await ws.send_json(ev("error", message=str(exc.detail)))
+            await ws.close(code=1008)
+            return
+        if engine == "demo" and alert_id != bankdb.ALERT_ID:
+            await ws.send_json(ev(
+                "error", message=f"Demo mode replays {bankdb.ALERT_ID}. Configure live credentials for other cases."
+            ))
+            await ws.close(code=1008)
+            return
+        run_id = runs.manager.create(alert_id, engine, role)
+
+    # Subscribe before replaying (and before starting a fresh run) so no live
+    # event slips through the gap between the replay snapshot and the stream.
+    queue = runs.manager.subscribe(run_id)
+
+    replayed_max = after
+    if resume_run_id:
+        for past in store.list_events(alert_id, after=after):
+            if past.get("run_id") == run_id:
+                await ws.send_json(past)
+                replayed_max = max(replayed_max, _safe_int(past.get("event_id"), after))
+
+    if queue is None:
+        # The run already finished; there is nothing live left to stream.
+        await ws.send_json(ev("run_status", run_id=run_id, status=store.get_run(run_id)["status"]))
+        await ws.close()
+        return
+
+    if not resume_run_id:
+        runs.manager.begin(run_id)
+
+    async def pump_out() -> None:
+        while True:
+            item = await queue.get()
+            if item is None:  # sentinel: the run has no more live events
+                break
+            if _safe_int(item.get("event_id"), 0) <= replayed_max:
+                continue  # already delivered during replay
+            await ws.send_json(item)
+
+    async def pump_in() -> None:
+        while True:
+            try:
+                decision = await ws.receive_json()
+            except Exception:
+                break  # disconnect — the run keeps going without this socket
+            runs.manager.decide(run_id, decision, role)
+
+    sender = asyncio.create_task(pump_out())
+    receiver = asyncio.create_task(pump_in())
+    try:
+        await asyncio.wait({sender, receiver}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in (sender, receiver):
+            task.cancel()
+        for task in (sender, receiver):
+            try:
+                await task
+            except (asyncio.CancelledError, WebSocketDisconnect, Exception):
+                pass
+        runs.manager.unsubscribe(run_id, queue)
+        try:
+            await ws.close()
         except Exception:
             pass
 

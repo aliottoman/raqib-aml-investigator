@@ -71,6 +71,13 @@ class SARReview(BaseModel):
     comment: str | None = Field(default=None, max_length=1000)
 
 
+class ApprovalDecision(BaseModel):
+    """Out-of-band SQL-approval decision (reconnect-safe). The call_id binds the
+    decision to the pending query, exactly like the WebSocket path."""
+    approve: bool
+    call_id: str | None = None
+
+
 def ev(type_: str, **kw) -> dict:
     """One WebSocket event. The UI switches on `type`."""
     return {"type": type_, **kw}

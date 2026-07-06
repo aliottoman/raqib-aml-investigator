@@ -62,7 +62,8 @@ p { color: var(--muted); }
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
 .sidebar { position: sticky; top: 0; height: 100vh; z-index: 50; display: flex; flex-direction: column; padding: 1.35rem 1rem; background: #20231f; color: #f4f0e8; }
 .wordmark { display: flex; align-items: center; gap: .75rem; min-height: 46px; padding: 0 .5rem; color: inherit; text-decoration: none; }
-.brand-seal { width: 34px; height: 34px; display: grid; place-items: center; flex: none; border: 1px solid rgba(255,255,255,.24); border-radius: 10px; color: #e9b59e; font-family: var(--serif); font-size: 1.2rem; }
+.brand-seal { width: 34px; height: 34px; display: grid; place-items: center; flex: none; overflow: hidden; border: 1px solid rgba(255,255,255,.24); border-radius: 10px; }
+.brand-seal img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; display: block; }
 .wordmark > span:last-child { display: flex; align-items: baseline; gap: .38rem; }
 .wordmark strong { font-family: var(--serif); font-size: 1.28rem; letter-spacing: -.02em; }
 .wordmark small { color: #d87e5b; font-family: var(--serif); font-size: .86rem; }
@@ -129,6 +130,8 @@ p { color: var(--muted); }
 .btn.ghost:hover { border-color: #aaa092; background: var(--paper); color: var(--ink); }
 .btn.sage { background: var(--sage); color: white; }
 .btn.crimson-o, .btn.danger { border-color: var(--crimson); color: var(--crimson); background: transparent; }
+.reconnect-banner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; padding: .7rem .95rem; border: 1px solid var(--accent); border-radius: 11px; background: var(--accent-soft); color: var(--ink); font-size: .82rem; }
+.reconnect-banner .btn { border-color: var(--accent); background: var(--paper-strong); color: var(--accent-dark); flex: none; }
 .icon-button { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; font-size: 1.35rem; }
 .icon-button:hover { background: var(--bg); }
 .text-link { border: 0; background: none; color: var(--accent-dark); font-size: .74rem; font-weight: 600; text-decoration: none; }

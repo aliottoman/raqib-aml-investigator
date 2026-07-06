@@ -1,31 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { wsUrl } from './api.js'
 
-// One WebSocket per investigation run. Events accumulate in order; the
-// timeline renders them directly. approve() answers the pending SQL gate.
+// One WebSocket per attachment to an investigation run. Events accumulate in
+// order; the timeline renders them directly. approve() answers the pending SQL
+// gate. Because the run now lives on the server (decoupled from this socket),
+// resume() reattaches to a run this socket dropped — replaying its persisted
+// events, then streaming the live tail.
 export function useInvestigation(role = 'analyst') {
   const [events, setEvents] = useState([])
   const [running, setRunning] = useState(false)
   const [connection, setConnection] = useState('idle')
+  const [runId, setRunId] = useState(null)
   const wsRef = useRef(null)
   const pendingApprovalRef = useRef(null)
 
   useEffect(() => () => wsRef.current?.close(), [])
 
-  const start = useCallback((engine, caseId) => {
+  const connect = useCallback((params) => {
     wsRef.current?.close()
     setEvents([])
     setRunning(true)
     setConnection('connecting')
-    const ws = new WebSocket(wsUrl('/ws/investigate', { engine, case: caseId, role }))
+    pendingApprovalRef.current = null
+    const ws = new WebSocket(wsUrl('/ws/investigate', { ...params, role }))
     wsRef.current = ws
     ws.onopen = () => setConnection('connected')
     ws.onmessage = (msg) => {
       const e = JSON.parse(msg.data)
+      if (e.run_id) setRunId(e.run_id)
       if (e.type === 'approval_request') pendingApprovalRef.current = e
       if (e.type === 'approval_result') pendingApprovalRef.current = null
       setEvents((prev) => [...prev, e])
-      if (e.type === 'done' || e.type === 'error') {
+      // done | error end the run; run_status arrives when reattaching to a run
+      // that already finished while we were away.
+      if (e.type === 'done' || e.type === 'error' || e.type === 'run_status') {
         setRunning(false)
         setConnection(e.type === 'error' ? 'error' : 'complete')
       }
@@ -36,6 +44,15 @@ export function useInvestigation(role = 'analyst') {
       setConnection((current) => current === 'complete' || current === 'error' ? current : 'disconnected')
     }
   }, [role])
+
+  const start = useCallback((engine, caseId) => connect({ engine, case: caseId }), [connect])
+
+  // Reattach to an existing run. after=0 replays the whole run from the server,
+  // so the reconnected timeline is complete without client-side dedup.
+  const resume = useCallback((resumeRunId, after = 0) => {
+    const target = resumeRunId ?? runId
+    if (target) connect({ run: target, after })
+  }, [connect, runId])
 
   const approve = useCallback((ok) => {
     const pending = pendingApprovalRef.current
@@ -52,6 +69,7 @@ export function useInvestigation(role = 'analyst') {
     setEvents([])
     setRunning(false)
     setConnection('idle')
+    setRunId(null)
     pendingApprovalRef.current = null
   }, [])
 
@@ -59,5 +77,5 @@ export function useInvestigation(role = 'analyst') {
     if (!running) setEvents(Array.isArray(history) ? history : [])
   }, [running])
 
-  return { events, running, connection, start, approve, reset, hydrate }
+  return { events, running, connection, runId, start, resume, approve, reset, hydrate }
 }

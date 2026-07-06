@@ -507,6 +507,63 @@ def update_run(run_id: str, *, status: str | None = None, conversation_id: str |
         con.close()
 
 
+def get_run(run_id: str) -> dict:
+    ensure_schema()
+    con = _connect(readonly=True)
+    try:
+        row = con.execute("SELECT * FROM investigation_runs WHERE id=?", (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return dict(row)
+    finally:
+        con.close()
+
+
+def list_runs(case_id: str) -> list[dict]:
+    """Every investigation run for a case, most recent first."""
+    get_case(case_id)
+    con = _connect(readonly=True)
+    try:
+        rows = con.execute(
+            "SELECT * FROM investigation_runs WHERE case_id=? ORDER BY started_at DESC, id DESC",
+            (case_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+
+# A run is durable state, not a socket. Statuses here mean:
+#   running     — a background task is (or should be) driving it
+#   completed   — finished and released its SAR draft
+#   cancelled   — an operator stopped it
+#   failed      — the run raised
+#   interrupted — the driving process died mid-run (see reconcile_stale_runs)
+ACTIVE_RUN_STATUS = "running"
+
+
+def reconcile_stale_runs() -> int:
+    """Mark runs orphaned by a process restart as interrupted.
+
+    A run left ``running`` cannot have a live background task after a restart,
+    so it is closed honestly rather than appearing perpetually in-flight. The
+    persisted ``conversation_id`` still allows a future resume-from-memory
+    (or OCI Queue re-dispatch) path.
+    """
+    con = _connect()
+    try:
+        cur = con.execute(
+            "UPDATE investigation_runs SET status='interrupted', "
+            "error=COALESCE(error,'Process restarted before completion'), completed_at=? "
+            "WHERE status=?",
+            (utcnow(), ACTIVE_RUN_STATUS),
+        )
+        con.commit()
+        return cur.rowcount
+    finally:
+        con.close()
+
+
 def append_event(case_id: str, event_type: str, payload: dict, *, run_id: str | None = None,
                  actor_role: str | None = None, call_id: str | None = None) -> int:
     now = utcnow()

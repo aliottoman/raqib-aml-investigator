@@ -228,6 +228,11 @@ export default function CasePage({ caseId, role, health }) {
   const data = detailToCaseData(detail)
   const status = detail.case_status ?? detail.status ?? data.alert.status ?? 'open'
   const events = investigation.events.length ? investigation.events : storedEvents
+  // A run now outlives the socket that started it. Offer to reattach when this
+  // socket dropped mid-run, or when the server still holds a running one.
+  const droppedMidRun = investigation.connection === 'disconnected' && investigation.runId && !runDone
+  const serverRun = detail.latest_run?.status === 'running' ? detail.latest_run.id : null
+  const resumableRunId = droppedMidRun ? investigation.runId : (!investigation.running ? serverRun : null)
 
   return (
     <div className="page case-page">
@@ -242,6 +247,12 @@ export default function CasePage({ caseId, role, health }) {
 
       <div className="case-content">
         {tab === 'overview' && <Dossier caseData={data} engine={engine} embedded canInvestigate={can(role, 'investigate')} onStart={can(role, 'investigate') ? () => { setTab('investigation'); investigation.start(engine, caseId) } : undefined} />}
+        {tab === 'investigation' && resumableRunId && can(role, 'investigate') && (
+          <div className="reconnect-banner" role="status">
+            <span>A governed investigation is running for this case. Reconnect to follow it live and approve queries.</span>
+            <button className="btn" onClick={() => investigation.resume(resumableRunId)}>Reconnect to live run</button>
+          </div>
+        )}
         {tab === 'investigation' && (events.length || investigation.running ? (
           <Timeline events={events} running={investigation.running} engine={engine} approve={investigation.approve} caseData={data} embedded canApprove={can(role, 'approve_sql')} />
         ) : (

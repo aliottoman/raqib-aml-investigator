@@ -115,6 +115,35 @@ def test_runs_and_events_survive_reconnect_and_support_cursor_paging(screened_ca
     assert all_events == sorted(all_events, key=lambda event: event["id"])
 
 
+def test_list_runs_and_get_run_expose_run_lifecycle(screened_cases):
+    first = store.start_run(bankdb.ALERT_ID, "demo", "analyst")
+    second = store.start_run(bankdb.ALERT_ID, "live", "analyst")
+    store.update_run(second["id"], status="completed", current_step=3)
+
+    runs = store.list_runs(bankdb.ALERT_ID)
+    assert {run["id"] for run in runs} == {first["id"], second["id"]}
+    assert store.get_run(second["id"])["status"] == "completed"
+    assert store.get_run(second["id"])["current_step"] == 3
+    with pytest.raises(KeyError):
+        store.get_run("run_does_not_exist")
+
+
+def test_reconcile_stale_runs_closes_orphaned_running_records(screened_cases):
+    orphan = store.start_run(bankdb.ALERT_ID, "live", "analyst")
+    finished = store.start_run(bankdb.ALERT_ID, "demo", "analyst")
+    store.update_run(finished["id"], status="completed")
+
+    # A run left "running" cannot have a live driver after a process restart.
+    reconciled = store.reconcile_stale_runs()
+
+    assert reconciled == 1
+    assert store.get_run(orphan["id"])["status"] == "interrupted"
+    assert store.get_run(orphan["id"])["completed_at"]
+    assert store.get_run(finished["id"])["status"] == "completed"
+    # Idempotent: a second pass finds nothing left running.
+    assert store.reconcile_stale_runs() == 0
+
+
 def test_approval_is_bound_to_run_and_call_and_cannot_be_decided_twice(screened_cases):
     run = store.start_run(bankdb.ALERT_ID, "live", "analyst")
     store.request_approval(
