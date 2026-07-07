@@ -25,8 +25,8 @@ def test_seed_is_deterministic_and_contains_flagship_facts(tmp_path: Path):
     )
     with closing(sqlite3.connect(first)) as a, closing(sqlite3.connect(second)) as b:
         assert a.execute(query).fetchall() == b.execute(query).fetchall()
-        assert a.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 9
-        assert a.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 508
+        assert a.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 19
+        assert a.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 1079
 
         count, total, branches, first_day, last_day = a.execute(
             "SELECT COUNT(*), ROUND(SUM(amount_aed), 2), COUNT(DISTINCT branch), "

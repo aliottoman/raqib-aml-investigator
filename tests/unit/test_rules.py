@@ -17,13 +17,20 @@ pytestmark = pytest.mark.unit
 def test_flagship_screening_is_exact_and_explainable():
     result = rules.run_screening()
 
-    assert result["customers_scanned"] == 9
-    assert result["transactions_scanned"] == 508
+    assert result["customers_scanned"] == 19
+    assert result["transactions_scanned"] == 1079
+    # The four curated cases keep their historical ids; the portfolio extension
+    # adds one more alert per rule family, sorted by severity then id.
     assert [(a["id"], a["rule"], a["severity"]) for a in result["alerts"]] == [
         ("RQB-2026-0347", "CASH-VELOCITY-04", "critical"),
+        ("RQB-2026-0401", "CASH-VELOCITY-04", "critical"),
         ("RQB-2026-0357", "WATCHLIST-PROX-01", "high"),
+        ("RQB-2026-0422", "WATCHLIST-PROX-01", "high"),
+        ("RQB-2026-0444", "WATCHLIST-PROX-01", "high"),
         ("RQB-2026-0364", "PROFILE-DEVIATION-02", "medium"),
+        ("RQB-2026-0428", "PROFILE-DEVIATION-02", "medium"),
         ("RQB-2026-0371", "DORMANT-SPIKE-03", "low"),
+        ("RQB-2026-0455", "DORMANT-SPIKE-03", "low"),
     ]
 
     cash = result["alerts"][0]
@@ -52,7 +59,7 @@ def test_screening_is_idempotent_and_preserves_workflow_status():
 
     with closing(sqlite3.connect(config.DB_PATH)) as con:
         rows = con.execute("SELECT id, status FROM alerts ORDER BY id").fetchall()
-    assert len(rows) == 4
+    assert len(rows) == 9
     assert dict(rows)[bankdb.ALERT_ID] == "investigating"
 
 
@@ -98,3 +105,32 @@ def test_rule_ids_are_stable_and_rule_scoped():
     assert rules._alert_id("CASH-VELOCITY-04", 1017) == bankdb.ALERT_ID
     assert rules._alert_id("WATCHLIST-PROX-01", 1017) != bankdb.ALERT_ID
     assert len({rules._alert_id(rule["rule"], 1017) for rule in rules.RULE_META}) == 4
+
+
+def test_portfolio_extension_is_precise_and_id_safe():
+    result = rules.run_screening()
+    fired = {(a["customer_id"], a["rule"]) for a in result["alerts"]}
+
+    # Each extension customer trips exactly its intended rule.
+    assert (1061, "CASH-VELOCITY-04") in fired
+    assert (1072, "WATCHLIST-PROX-01") in fired
+    assert (1094, "WATCHLIST-PROX-01") in fired
+    assert (1068, "PROFILE-DEVIATION-02") in fired
+    assert (1085, "DORMANT-SPIKE-03") in fired
+
+    # The clean control customers raise nothing (rule precision).
+    alerting = {a["customer_id"] for a in result["alerts"]}
+    assert alerting.isdisjoint({1063, 1074, 1077, 1081, 1088})
+
+    # Alert ids are unique, and the four curated ids are preserved verbatim.
+    ids = [a["id"] for a in result["alerts"]]
+    assert len(ids) == len(set(ids))
+    assert {"RQB-2026-0347", "RQB-2026-0357", "RQB-2026-0364", "RQB-2026-0371"} <= set(ids)
+
+
+def test_screening_fails_loudly_on_an_id_collision(monkeypatch: pytest.MonkeyPatch):
+    # The ON CONFLICT upsert would silently merge two customers' alerts if ids
+    # collided; the guard must raise instead.
+    monkeypatch.setattr(rules, "_alert_id", lambda rule, cid: "RQB-2026-0999")
+    with pytest.raises(RuntimeError, match="collision"):
+        rules.run_screening()

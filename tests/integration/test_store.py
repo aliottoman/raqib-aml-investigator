@@ -30,7 +30,7 @@ def test_product_schema_is_additive_idempotent_and_preserves_ledger():
         )}
         migration_count = con.execute("SELECT COUNT(*) FROM app_migrations").fetchone()[0]
 
-    assert before == 508
+    assert before == 1079
     assert bankdb.execute_readonly("SELECT COUNT(*) AS n FROM transactions")["rows"][0]["n"] == before
     assert {
         "cases", "investigation_runs", "case_events", "case_notes", "approvals",
@@ -39,13 +39,13 @@ def test_product_schema_is_additive_idempotent_and_preserves_ledger():
     assert migration_count == 1
 
 
-def test_screening_syncs_four_persistent_cases(screened_cases):
-    assert [case["id"] for case in screened_cases] == [
-        "RQB-2026-0347",
-        "RQB-2026-0357",
-        "RQB-2026-0364",
-        "RQB-2026-0371",
-    ]
+def test_screening_syncs_persistent_cases(screened_cases):
+    # The four curated cases plus one per rule from the portfolio extension.
+    assert {case["id"] for case in screened_cases} == {
+        "RQB-2026-0347", "RQB-2026-0357", "RQB-2026-0364", "RQB-2026-0371",
+        "RQB-2026-0401", "RQB-2026-0422", "RQB-2026-0428", "RQB-2026-0444",
+        "RQB-2026-0455",
+    }
     flagship = store.get_case(bankdb.ALERT_ID)
     assert flagship["customer_name"] == "Al Rashidi Trading FZE"
     assert flagship["priority"] == "urgent"

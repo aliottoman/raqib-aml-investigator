@@ -20,9 +20,20 @@ import json
 import config
 from src import bankdb
 
-# id = RQB-2026-0{base + customer_id % 10}
 _ID_BASE = {"CASH-VELOCITY-04": 340, "WATCHLIST-PROX-01": 350,
             "PROFILE-DEVIATION-02": 360, "DORMANT-SPIKE-03": 370}
+
+# The four original curated cases keep their historical ids verbatim — the demo
+# tape and golden evals reference them by string. Every other (rule, customer)
+# pair derives an id from the rule base + customer_id % 100, which gives ample
+# headroom; run_screening additionally asserts ids are unique so a collision can
+# never silently merge two customers' alerts through the ON CONFLICT upsert.
+_CANONICAL_ALERT_IDS = {
+    ("CASH-VELOCITY-04", bankdb.CUSTOMER_ID): "RQB-2026-0347",
+    ("WATCHLIST-PROX-01", bankdb.CUSTOMER_ID): "RQB-2026-0357",
+    ("PROFILE-DEVIATION-02", 1044): "RQB-2026-0364",
+    ("DORMANT-SPIKE-03", 1031): "RQB-2026-0371",
+}
 
 RULE_DEFINITIONS = [
     {"rule": "CASH-VELOCITY-04", "label": "Sub-threshold cash velocity",
@@ -49,7 +60,10 @@ AS_OF_DATE = date(2026, 6, 28)
 
 
 def _alert_id(rule: str, customer_id: int) -> str:
-    return f"RQB-2026-0{_ID_BASE[rule] + customer_id % 10}"
+    canonical = _CANONICAL_ALERT_IDS.get((rule, customer_id))
+    if canonical:
+        return canonical
+    return f"RQB-2026-{_ID_BASE[rule] + customer_id % 100:04d}"
 
 
 def _business_days_inclusive(start: date, end: date) -> int:
@@ -254,6 +268,14 @@ def run_screening(actor_role: str = "analyst") -> dict:
     n_customers = con.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
     n_txns = con.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
     con.close()
+
+    # A duplicate id would let the ON CONFLICT upsert silently merge two
+    # customers' alerts into one. Fail loudly instead — this is the safety net
+    # behind the collision-safe _alert_id scheme.
+    ids = [a["id"] for a in alerts]
+    if len(ids) != len(set(ids)):
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        raise RuntimeError(f"Alert id collision across customers: {', '.join(dupes)}")
 
     # Upsert, preserving triage status of alerts that already exist.
     w = sqlite3.connect(str(config.DB_PATH))

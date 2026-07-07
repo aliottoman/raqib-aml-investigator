@@ -64,8 +64,8 @@ def test_unknown_persona_is_rejected(api_client):
 @pytest.mark.parametrize("role", ["analyst", "rule_admin"])
 def test_authorized_roles_can_run_screening(api_client, role: str):
     result = _screen(api_client, role)
-    assert result["customers_scanned"] == 9
-    assert len(result["alerts"]) == 4
+    assert result["customers_scanned"] == 19
+    assert len(result["alerts"]) == 9
     assert result["run_id"].startswith("rr_")
 
 
@@ -78,7 +78,7 @@ def test_read_only_roles_cannot_run_screening(api_client, role: str):
 def test_case_routes_support_search_filtering_notes_and_event_cursors(api_client):
     _screen(api_client)
     cases = api_client.get("/api/cases").json()
-    assert cases["total"] == 4
+    assert cases["total"] == 9
 
     searched = api_client.get("/api/cases", params={"search": "rashidi"}).json()
     assert searched["total"] == 2  # one customer may have multiple rule-specific cases
@@ -138,9 +138,9 @@ def test_overview_analytics_rules_and_architecture_have_stable_shapes(api_client
     architecture = api_client.get("/api/architecture").json()
 
     assert overview["principle"] == "Rules detect. AI investigates. Humans decide."
-    assert overview["metrics"]["active_cases"] == 4
-    assert analytics["summary"]["customers_monitored"] == 9
-    assert analytics["summary"]["transactions_monitored"] == 508
+    assert overview["metrics"]["active_cases"] == 9
+    assert analytics["summary"]["customers_monitored"] == 19
+    assert analytics["summary"]["transactions_monitored"] == 1079
     assert len(rules["rules"]) == 4
     assert {node["status"] for node in architecture["current"]["nodes"]} == {"implemented"}
     assert {profile["id"] for profile in architecture["deployment_profiles"]} == {
@@ -166,7 +166,7 @@ def test_rule_admin_can_patch_and_simulate_without_persisting_candidate(api_clie
     )
     assert simulation.status_code == 200
     assert simulation.json()["persisted"] is False
-    assert simulation.json()["match_count"] == 1
+    assert simulation.json()["match_count"] == 2  # flagship 1017 + extension 1061
     assert simulation.json()["simulation_id"].startswith("rr_")
 
     persisted = next(

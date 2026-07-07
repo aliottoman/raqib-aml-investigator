@@ -2,18 +2,24 @@
 Raqib — the bank ledger the agent investigates.
 
 A deterministic SQLite database (per-customer seeded RNG, stable across
-rebuilds) holding a small retail-commercial portfolio at Gulf Crescent Bank
-(fictional, AED). Most customers are unremarkable; three trip detection rules:
+rebuilds) holding a retail-commercial portfolio at Gulf Crescent Bank
+(fictional, AED). Most customers are unremarkable; a handful trip detection
+rules. The original curated cases are seeded byte-identically — the recorded
+demo tape and the golden evals depend on them:
 
 * 1017 Al Rashidi Trading FZE — THE case. 14 sub-threshold cash deposits in
   9 business days across four branches (structuring), then rapid wires out —
-  one counterparty's beneficial owner is on the internal watchlist. This
-  customer's rows are seeded exactly as v1 so the recorded demo tape and the
-  dossier stay consistent.
+  one counterparty's beneficial owner is on the internal watchlist. Seeded
+  exactly as v1 so the tape and dossier stay consistent.
 * 1031 Marhaba Foodstuff Trading — dormant for ~3 months, then one large
   inbound wire (explainable: seasonal Ramadan restocking, per its profile).
 * 1044 Nujoom Events LLC — running ~2.3x its declared turnover (borderline
   profile deviation; growth, not laundering).
+
+The portfolio is then extended (append-only, so the customers above are never
+disturbed) with more customers — some that trip each rule and several clean
+controls — so the alert queue is a realistic worklist to triage, not a fixed
+set of four. New alerting customers are listed in ``_ANOMALY_SEEDERS``.
 
 Detection lives in src/rules.py — this module only owns data + safe access.
 `execute_readonly()` is the enforcement half of the governed-SQL story: the
@@ -29,7 +35,7 @@ from datetime import datetime, timedelta
 
 import config
 
-SCHEMA_VERSION = 2  # deterministic ledger seed version; never auto-destructively migrated
+SCHEMA_VERSION = 3  # deterministic ledger seed version; never auto-destructively migrated
 
 CUSTOMER_ID = 1017              # the flagship case subject
 ALERT_ID = "RQB-2026-0347"      # the taped investigation
@@ -83,6 +89,27 @@ CUSTOMERS = [
      "Corporate events agency; fast-growing client roster in 2026."),
     (1052, "Atlas Auto Spare Parts", "Sole establishment", "AE", "Low", 95_000, "2020-07-08",
      "Spare-parts trader, Sharjah corridor; small steady supplier wires to CN."),
+    # ── portfolio extension (append-only) — five alerting, five clean ────────
+    (1061, "Zenith Metals Trading LLC", "LLC", "AE", "Medium", 320_000, "2023-09-14",
+     "Scrap and base-metals trader, Sharjah; cash-and-carry counter sales."),
+    (1063, "Horizon Clinic Group", "LLC", "AE", "Low", 300_000, "2019-08-22",
+     "Multi-branch outpatient clinics; insurance and card receipts."),
+    (1068, "Silk Route Traders FZE", "Free-zone company", "AE", "Medium", 110_000, "2025-08-19",
+     "General trading, DMCC; new relationship, onboarding clients quickly."),
+    (1072, "Cedarwood Interiors LLC", "LLC", "AE", "Medium", 180_000, "2022-05-30",
+     "Fit-out contractor; imports joinery and fittings from Europe."),
+    (1074, "Gulf Stationery Wholesale", "LLC", "AE", "Low", 140_000, "2017-03-11",
+     "B2B stationery distributor; steady school-term cycles."),
+    (1077, "Aster Facilities Management", "LLC", "AE", "Low", 260_000, "2020-12-01",
+     "Cleaning and MEP maintenance; payroll-heavy monthly outflows."),
+    (1081, "Bluewave Seafood Trading", "LLC", "AE", "Medium", 175_000, "2021-10-17",
+     "Chilled-seafood importer; Oman and India supplier wires."),
+    (1085, "Pearl Coast Catering LLC", "LLC", "AE", "Low", 130_000, "2022-07-25",
+     "Event caterer; lumpy seasonal bookings, quiet summers."),
+    (1088, "Sahara Logistics Partners", "LLC", "AE", "Low", 320_000, "2018-05-09",
+     "Freight forwarder; DP World and inland-haulage settlements."),
+    (1094, "Amber Fintech Solutions FZE", "Free-zone company", "AE", "Medium", 200_000, "2024-11-02",
+     "Software and payments consultancy; cross-border vendor payments."),
 ]
 
 
@@ -177,6 +204,78 @@ def _seed_ordinary(rows: list, account_id: int, customer: tuple, rng: random.Ran
                      96_000.0, "Etisalat Business", "AE", "product launch — production"))
 
 
+# --------------------------------------------------------------------------- #
+#  Portfolio-extension anomalies. Each seeds a clean commercial baseline via
+#  _seed_ordinary, then injects one rule-tripping pattern, so a new alerting
+#  customer still looks like a real account. _seed_ordinary is never modified,
+#  so the original customers stay byte-identical.
+# --------------------------------------------------------------------------- #
+_WATCHLIST_TARGET = {
+    1072: ("Nordwind Holdings AG", "CH", "PO-5521 fit-out materials"),
+    1094: ("Volga Metallhandel OOO", "RU", "vendor settlement — infra build"),
+}
+
+
+def _seed_structuring(rows: list, account_id: int, customer: tuple, rng: random.Random) -> None:
+    """Sub-threshold cash velocity: several deposits just under the CTR band,
+    spread across branches within a short window (policy §4.2)."""
+    _seed_ordinary(rows, account_id, customer, rng)
+    for i, d in enumerate(["2026-06-02", "2026-06-03", "2026-06-05", "2026-06-09"]):
+        rows.append((account_id,
+                     datetime.fromisoformat(d).replace(hour=rng.randint(9, 16), minute=rng.randint(0, 59)),
+                     "cash_deposit", "branch", BRANCHES[i % 4],
+                     round(rng.uniform(31_000, 36_800), 2), "CASH", "AE", f"CD-{2026_1000 + i}"))
+
+
+def _seed_watchlist_wire(rows: list, account_id: int, customer: tuple, rng: random.Random) -> None:
+    """Outbound wire to a counterparty carried on the internal watchlist (§6.1)."""
+    _seed_ordinary(rows, account_id, customer, rng)
+    entity, cc, ref = _WATCHLIST_TARGET[customer[0]]
+    rows.append((account_id, datetime(2026, 6, 17, rng.randint(10, 15), rng.randint(0, 59)),
+                 "wire_out", "online", "Business Bay",
+                 -round(rng.uniform(86_000, 112_000), 2), entity, cc, ref))
+
+
+def _seed_profile_deviation(rows: list, account_id: int, customer: tuple, rng: random.Random) -> None:
+    """Credits far above the declared profile for two consecutive months (§5.4)."""
+    _seed_ordinary(rows, account_id, customer, rng)
+    injections = [("2026-05-08", 160_000, "GEMS Corporate"), ("2026-05-22", 150_000, "Etisalat Business"),
+                  ("2026-06-09", 155_000, "Majid Al Futtaim Retail"), ("2026-06-23", 150_000, "Emaar Facilities")]
+    for d, amount, cp in injections:
+        rows.append((account_id, datetime.fromisoformat(d).replace(hour=rng.randint(9, 16)),
+                     "wire_in", "online", rng.choice(BRANCHES), float(amount), cp, "AE",
+                     f"INV-{rng.randint(20_000, 99_999)}"))
+
+
+def _seed_dormant(rows: list, account_id: int, customer: tuple, rng: random.Random) -> None:
+    """Quiet for a quarter, then one outsized inbound credit — custom-seeded
+    (not via _seed_ordinary) because the pattern needs a genuine activity gap."""
+    declared = customer[5]
+    day = datetime(2026, 1, 3, 10, 0)
+    while day < datetime(2026, 1, 31):  # a little ordinary January activity
+        if day.weekday() < 5 and rng.random() < 0.35:
+            amount = rng.uniform(0.08, 0.16) * declared
+            rows.append((account_id, day.replace(hour=rng.randint(9, 16)), "pos_settlement", "branch",
+                         rng.choice(BRANCHES), round(amount, 2), "Network International POS", "AE",
+                         f"REF-{rng.randint(10_000, 99_999)}"))
+        day += timedelta(days=1)
+    # ~67-day gap, then the spike (> 1.2x declared within the follow-up window).
+    rows.append((account_id, datetime(2026, 4, 7, 11, 20), "wire_in", "online", "Deira",
+                 round(1.6 * declared, 2), "Coastline Ventures Ltd", "AE", "asset disposal proceeds"))
+    for d, amount, cp in [("2026-05-15", 0.4, "GEMS Corporate"), ("2026-06-18", 0.35, "Etisalat Business")]:
+        rows.append((account_id, datetime.fromisoformat(d).replace(hour=13), "wire_in", "online",
+                     "Deira", round(amount * declared, 2), cp, "AE", f"INV-{rng.randint(20_000, 99_999)}"))
+
+
+_ANOMALY_SEEDERS = {
+    1061: _seed_structuring,
+    1068: _seed_profile_deviation,
+    1072: _seed_watchlist_wire,
+    1085: _seed_dormant,
+    1094: _seed_watchlist_wire,
+}
+
+
 def build(path=None) -> None:
     """Create and seed the database from scratch (idempotent, deterministic)."""
     path = str(path or config.DB_PATH)
@@ -196,6 +295,8 @@ def build(path=None) -> None:
                      cust[6], "Jebel Ali" if cust[0] == CUSTOMER_ID else BRANCHES[i % 4]))
         if cust[0] == CUSTOMER_ID:
             _seed_flagship(rows, random.Random(7741))  # v1 seed — do not change
+        elif cust[0] in _ANOMALY_SEEDERS:
+            _ANOMALY_SEEDERS[cust[0]](rows, account_id, cust, random.Random(cust[0]))
         else:
             _seed_ordinary(rows, account_id, cust, random.Random(cust[0]))
 
@@ -209,6 +310,10 @@ def build(path=None) -> None:
          "designated entity; enhanced due diligence mandatory, see policy §6.1."),
         ("Caspian Freight Alliance", "Internal Watchlist — Shell Indicators", "Entity",
          "Suspected layering vehicle; multiple correspondent-bank RFIs in 2025."),
+        ("Nordwind Holdings AG", "Internal Watchlist — Shell Indicators", "Entity",
+         "Zurich-registered holding with no operating footprint; flagged in a 2025 correspondent RFI."),
+        ("Volga Metallhandel OOO", "Internal Watchlist — Secondary Sanctions Exposure", "Entity",
+         "Metals trader with ownership ties to a designated intermediary; enhanced due diligence mandatory."),
     ])
     con.commit()
     con.close()
