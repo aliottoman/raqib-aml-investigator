@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { StrokeIcon } from './Icons.jsx'
 
 const TOOL_META = {
-  query_bank_ledger: { ico: '⌁', tone: 'indigo', title: 'Bank ledger', sub: 'governed SQL · analyst-approved' },
-  search_aml_policy: { ico: '§', tone: 'sage', title: 'AML policy', sub: 'semantic retrieval · OCI embeddings' },
-  read_case_document: { ico: '⎘', tone: 'accent', title: 'Case file', sub: 'screened by OCI Guardrails on read' },
-  check_watchlist: { ico: '⚑', tone: 'crimson', title: 'Internal watchlist', sub: 'entity + related-party screening' },
-  screen_adverse_media: { ico: '⌕', tone: 'accent', title: 'Adverse media', sub: 'xAI web_search · server-side tool' },
+  query_bank_ledger: { icon: 'ledger', tone: 'indigo', title: 'Bank ledger', sub: 'governed SQL · analyst-approved' },
+  search_aml_policy: { icon: 'policy', tone: 'sage', title: 'AML policy', sub: 'semantic retrieval · OCI embeddings' },
+  read_case_document: { icon: 'document', tone: 'accent', title: 'Case file', sub: 'screened by OCI Guardrails on read' },
+  check_watchlist: { icon: 'watchlist', tone: 'crimson', title: 'Internal watchlist', sub: 'entity + related-party screening' },
+  screen_adverse_media: { icon: 'search', tone: 'accent', title: 'Adverse media', sub: 'xAI web_search · server-side tool' },
 }
 
 const CAPS = [
@@ -55,7 +56,7 @@ function RowsTable({ result }) {
 }
 
 function ToolCard({ call, result, approval, approve, engine, active, canApprove = true }) {
-  const meta = TOOL_META[call.name] ?? { ico: '·', tone: 'indigo', title: call.name, sub: '' }
+  const meta = TOOL_META[call.name] ?? { icon: 'document', tone: 'indigo', title: call.name, sub: '' }
   const pendingApproval = call.name === 'query_bank_ledger' && approval?.request && !approval?.result
   const [override, setOverride] = useState(null)
   const open = override ?? (pendingApproval || active || !result)
@@ -64,8 +65,8 @@ function ToolCard({ call, result, approval, approve, engine, active, canApprove 
   return (
     <section className={`card tool-card ${pendingApproval ? 'approval' : ''}`}>
       <button type="button" className="tool-head clickable" onClick={() => setOverride(!open)} aria-expanded={open}>
-        <span className={`chev ${open ? 'open' : ''}`}>▶</span>
-        <div className={`tool-ico ${meta.tone}`}>{meta.ico}</div>
+        <StrokeIcon name="chevron" className={`chev ${open ? 'open' : ''}`} />
+        <div className={`tool-ico ${meta.tone}`}><StrokeIcon name={meta.icon} /></div>
         <div>
           <div className="t-name">{meta.title}</div>
           {open && <div className="t-sub">{meta.sub}</div>}
@@ -148,8 +149,8 @@ function CodeCard({ e, active }) {
   return (
     <section className="card tool-card evt">
       <button type="button" className="tool-head clickable" onClick={() => setOverride(!open)} aria-expanded={open}>
-        <span className={`chev ${open ? 'open' : ''}`}>▶</span>
-        <div className="tool-ico indigo">λ</div>
+        <StrokeIcon name="chevron" className={`chev ${open ? 'open' : ''}`} />
+        <div className="tool-ico indigo"><StrokeIcon name="code" /></div>
         <div>
           <div className="t-name">Code interpreter</div>
           {open && <div className="t-sub">sandboxed Python · OCI managed container</div>}
@@ -165,6 +166,39 @@ function CodeCard({ e, active }) {
       )}
     </section>
   )
+}
+
+function InlineMarkup({ text }) {
+  return String(text ?? '').split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => (
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={index}>{part.slice(2, -2)}</strong>
+      : <React.Fragment key={index}>{part}</React.Fragment>
+  ))
+}
+
+function AgentAssessment({ text }) {
+  const blocks = []
+  let bullets = []
+  const flushBullets = () => {
+    if (!bullets.length) return
+    blocks.push(<ul key={`list-${blocks.length}`}>{bullets.map((line, index) => <li key={index}><InlineMarkup text={line} /></li>)}</ul>)
+    bullets = []
+  }
+  String(text ?? '').split('\n').forEach((raw) => {
+    const line = raw.trim()
+    if (!line) {
+      flushBullets()
+      return
+    }
+    if (/^[-*]\s+/.test(line)) {
+      bullets.push(line.replace(/^[-*]\s+/, ''))
+      return
+    }
+    flushBullets()
+    blocks.push(<p key={`paragraph-${blocks.length}`}><InlineMarkup text={line} /></p>)
+  })
+  flushBullets()
+  return <div className="agent-copy">{blocks}</div>
 }
 
 export default function Timeline({ events, running, engine, approve, caseData, onBack, embedded = false, canApprove = true }) {
@@ -267,7 +301,7 @@ export default function Timeline({ events, running, engine, approve, caseData, o
               return (
                 <section className="card agent-final evt" key={i}>
                   <div className="eyebrow">Raqib — assessment to analyst</div>
-                  {e.text}
+                  <AgentAssessment text={e.text} />
                 </section>
               )
             case 'error':

@@ -107,6 +107,98 @@ def test_case_routes_support_search_filtering_notes_and_event_cursors(api_client
     assert len(detail["dossier"]["june_deposits"]) == 14
 
 
+def test_bulk_triage_assigns_and_reports_skips(api_client):
+    _screen(api_client)
+    response = api_client.post(
+        "/api/cases/bulk",
+        json={"case_ids": [bankdb.ALERT_ID, "NO-SUCH-CASE"], "action": "assign", "owner": "Desk 3"},
+        headers={"X-Raqib-Role": "analyst"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["updated"] == [bankdb.ALERT_ID]
+    assert body["skipped"] == [{"case_id": "NO-SUCH-CASE", "reason": "unknown case"}]
+    assert api_client.get(f"/api/cases/{bankdb.ALERT_ID}").json()["owner"] == "Desk 3"
+
+
+def test_bulk_triage_validates_payload_and_gates_roles(api_client):
+    _screen(api_client)
+    missing_owner = api_client.post(
+        "/api/cases/bulk",
+        json={"case_ids": [bankdb.ALERT_ID], "action": "assign"},
+        headers={"X-Raqib-Role": "analyst"},
+    )
+    assert missing_owner.status_code == 422
+
+    missing_close_reason = api_client.post(
+        "/api/cases/bulk",
+        json={"case_ids": [bankdb.ALERT_ID], "action": "transition", "status": "closed"},
+        headers={"X-Raqib-Role": "analyst"},
+    )
+    assert missing_close_reason.status_code == 422
+    assert "rationale" in missing_close_reason.json()["detail"]
+    assert api_client.get(f"/api/cases/{bankdb.ALERT_ID}").json()["status"] == "open"
+
+    for role in ("auditor", "rule_admin"):
+        forbidden = api_client.post(
+            "/api/cases/bulk",
+            json={"case_ids": [bankdb.ALERT_ID], "action": "priority", "priority": "low"},
+            headers={"X-Raqib-Role": role},
+        )
+        assert forbidden.status_code == 403
+
+
+def test_demo_reset_reopens_cases_and_is_rule_admin_only(api_client):
+    _screen(api_client)
+    closed = api_client.post(
+        "/api/cases/bulk",
+        json={"case_ids": [bankdb.ALERT_ID], "action": "transition",
+              "status": "closed", "reason": "worked and closed"},
+        headers={"X-Raqib-Role": "analyst"},
+    )
+    assert closed.status_code == 200
+    assert api_client.get(f"/api/cases/{bankdb.ALERT_ID}").json()["status"] == "closed"
+
+    # Only the Rule Administrator persona can reset the demo.
+    for role in ("analyst", "reviewer", "auditor"):
+        forbidden = api_client.post("/api/demo/reset", headers={"X-Raqib-Role": role})
+        assert forbidden.status_code == 403
+
+    reset = api_client.post("/api/demo/reset", headers={"X-Raqib-Role": "rule_admin"})
+    assert reset.status_code == 200
+    assert bankdb.ALERT_ID in reset.json()["reopened"]
+    assert api_client.get(f"/api/cases/{bankdb.ALERT_ID}").json()["status"] == "open"
+
+
+def test_case_queue_filters_by_rule_and_owner(api_client):
+    _screen(api_client)
+    api_client.post(
+        "/api/cases/bulk",
+        json={"case_ids": [bankdb.ALERT_ID], "action": "assign", "owner": "Nadia"},
+        headers={"X-Raqib-Role": "analyst"},
+    )
+    by_rule = api_client.get("/api/cases", params={"rule": "WATCHLIST-PROX-01"}).json()
+    assert by_rule["total"] == 3
+    assert {case["rule"] for case in by_rule["cases"]} == {"WATCHLIST-PROX-01"}
+
+    by_owner = api_client.get("/api/cases", params={"owner": "Nadia"}).json()
+    assert [case["id"] for case in by_owner["cases"]] == [bankdb.ALERT_ID]
+
+    alerts = api_client.get("/api/alerts").json()["alerts"]
+    flagship = next(alert for alert in alerts if alert["id"] == bankdb.ALERT_ID)
+    assert flagship["workflow_status"] == "open"
+    assert flagship["case_status"] == "open"
+
+
+def test_triage_summary_aggregates_the_queue(api_client):
+    _screen(api_client)
+    triage = api_client.get("/api/triage").json()
+    assert triage["total"] == 9 and triage["active"] == 9
+    assert triage["by_rule"]["WATCHLIST-PROX-01"] == 3
+    assert triage["by_severity"]["critical"] == 2
+    assert set(triage["by_status"]) == {"open"}
+
+
 @pytest.mark.parametrize("role", ["auditor", "rule_admin"])
 def test_read_only_and_rule_personas_cannot_add_case_notes(api_client, role: str):
     _screen(api_client)
@@ -128,6 +220,18 @@ def test_case_transitions_are_available_to_workflow_roles(api_client, role: str)
     )
     assert response.status_code == 200
     assert response.json()["case"]["status"] == "closed"
+
+
+def test_case_closure_requires_a_rationale(api_client):
+    _screen(api_client)
+    response = api_client.post(
+        f"/api/cases/{bankdb.ALERT_ID}/transition",
+        json={"status": "closed"},
+        headers={"X-Raqib-Role": "analyst"},
+    )
+    assert response.status_code == 422
+    assert "rationale" in response.json()["detail"]
+    assert api_client.get(f"/api/cases/{bankdb.ALERT_ID}").json()["status"] == "open"
 
 
 def test_overview_analytics_rules_and_architecture_have_stable_shapes(api_client):

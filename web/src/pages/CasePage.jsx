@@ -109,8 +109,8 @@ function AuditTrail({ caseId, events, detail, role, status, onRefresh }) {
         {allowed.length > 0 && <form className="transition-form" onSubmit={transition}>
           <div className="eyebrow">Case lifecycle</div>
           <label>Move case to<select value={nextStatus} onChange={(e) => setNextStatus(e.target.value)}><option value="">Select status…</option>{allowed.map((item) => <option key={item} value={item}>{item.replaceAll('_', ' ')}</option>)}</select></label>
-          {nextStatus && <label>Reason<input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Short rationale (optional)" /></label>}
-          <button className="btn ghost" disabled={!nextStatus || saving}>Update case status</button>
+          {nextStatus && <label>Reason{nextStatus === 'closed' ? ' · required to close' : ''}<input value={reason} onChange={(e) => setReason(e.target.value)} required={nextStatus === 'closed'} placeholder={nextStatus === 'closed' ? 'Explain why this case can be closed…' : 'Short rationale (optional)'} /></label>}
+          <button className="btn ghost" disabled={!nextStatus || saving || (nextStatus === 'closed' && !reason.trim())}>Update case status</button>
         </form>}
       </aside>
     </div>
@@ -127,7 +127,7 @@ function SarWorkspace({ caseId, value, role, onRefresh }) {
   useEffect(() => setDraft(source), [value])
   if (!draft) return <EmptyState eyebrow="SAR workspace" title="No report has been drafted" body="Complete the investigation first. Raqib will prepare a structured, evidence-linked draft for analyst review." />
   const workflowStatus = value?.workflow_status ?? value?.status ?? draft.status ?? 'draft'
-  const progressIndex = workflowStatus === 'filed' ? 3 : workflowStatus === 'approved' ? 2 : workflowStatus === 'pending_review' ? 1 : 0
+  const progressIndex = ['approved', 'filed'].includes(workflowStatus) ? 3 : workflowStatus === 'pending_review' ? 1 : 0
   const finalOutput = ['approved', 'filed'].includes(workflowStatus)
 
   const mutate = async (path, options, message) => {
@@ -146,7 +146,7 @@ function SarWorkspace({ caseId, value, role, onRefresh }) {
       <div className="sar-workflow-bar">
         <div><span className="eyebrow">Filing workflow</span><strong className={`status-label ${workflowStatus}`}>{String(workflowStatus).replaceAll('_', ' ')}</strong></div>
         <div className="workflow-steps" aria-label={`SAR status: ${workflowStatus}`}>
-          {['draft', 'pending review', 'approved', 'filed'].map((step, index) => <span key={step} className={index <= progressIndex ? 'done' : ''}><i />{step}</span>)}
+          {['draft', 'pending review', 'approved', 'export ready'].map((step, index) => <span key={step} className={index <= progressIndex ? 'done' : ''}><i />{step}</span>)}
         </div>
         <div className="sar-actions">
           {can(role, 'edit_sar') && <button className="btn ghost" onClick={() => setEditing((v) => !v)}>{editing ? 'Cancel edit' : 'Edit draft'}</button>}

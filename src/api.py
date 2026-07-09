@@ -24,8 +24,8 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from src import bankdb, runs, store
-from src.schemas import (ApprovalDecision, CaseTransition, NoteCreate, RuleSimulation,
-                         RuleUpdate, SARReview, ev)
+from src.schemas import (ApprovalDecision, BulkTriage, CaseTransition, NoteCreate,
+                         RuleSimulation, RuleUpdate, SARReview, ev)
 
 
 @asynccontextmanager
@@ -198,6 +198,15 @@ def screening_run(role: str = Depends(require_roles("analyst", "rule_admin"))) -
     return rules.run_screening(actor_role=role)
 
 
+@app.post("/api/demo/reset")
+def demo_reset(role: str = Depends(require_roles("rule_admin"))) -> dict:
+    """Demo control (Rule Administrator): reopen every resolved or in-flight
+    case so the critical and high-severity signals return to the queue for
+    another walkthrough. Case and alert status is rewound; SAR revisions,
+    notes, and the audit trail are preserved. This is not a regulatory action."""
+    return store.reset_demo(actor_role=role)
+
+
 @app.get("/api/alerts")
 def alerts(active_only: bool = False) -> dict:
     store.ensure_schema()
@@ -213,6 +222,9 @@ def alerts(active_only: bool = False) -> dict:
     import json
     for row in rows.get("rows", []):
         row["is_active"] = bool(row.get("is_active", 1))
+        # `status` is retained as the detection-record status for backwards
+        # compatibility. New clients should use the canonical case lifecycle.
+        row["workflow_status"] = row.get("case_status") or "open"
         try:
             row["evidence"] = json.loads(row.pop("evidence_json", "{}") or "{}")
         except Exception:
@@ -227,14 +239,54 @@ def legacy_case(alert_id: str = bankdb.ALERT_ID) -> dict:
 
 
 @app.get("/api/cases")
-def cases(status: str | None = None, search: str | None = None) -> dict:
+def cases(status: str | None = None, search: str | None = None,
+          rule: str | None = None, owner: str | None = None) -> dict:
     rows = store.list_cases()
     if status:
         rows = [r for r in rows if r["status"] == status]
+    if rule:
+        rows = [r for r in rows if r["rule"] == rule]
+    if owner:
+        rows = [r for r in rows if (r.get("owner") or "") == owner]
     if search:
         needle = search.casefold()
         rows = [r for r in rows if needle in r["id"].casefold() or needle in r["customer_name"].casefold()]
     return {"cases": rows, "total": len(rows)}
+
+
+@app.post("/api/cases/bulk")
+def bulk_triage(body: BulkTriage,
+                role: str = Depends(require_roles("analyst", "reviewer"))) -> dict:
+    """Apply one triage action (assign / priority / transition) across many
+    cases. Returns which cases updated and which were skipped, with reasons."""
+    required = {"assign": (body.owner and body.owner.strip(), "a non-empty owner"),
+                "priority": (body.priority, "a priority"),
+                "transition": (body.status, "a target status")}[body.action]
+    if not required[0]:
+        raise HTTPException(422, f"The '{body.action}' action requires {required[1]}.")
+    if body.action == "transition" and body.status == "closed" and not (body.reason or "").strip():
+        raise HTTPException(422, "Closing cases requires a non-empty rationale.")
+    return store.apply_bulk(
+        body.case_ids, body.action, actor_role=role, owner=body.owner,
+        priority=body.priority, status=body.status, reason=body.reason)
+
+
+@app.get("/api/triage")
+def triage() -> dict:
+    """Queue aggregates for batch triage — counts by rule, severity, status,
+    priority, and owner (open cases), plus totals."""
+    rows = store.list_cases()
+    active = [r for r in rows if r["status"] != "closed"]
+    return {
+        "total": len(rows),
+        "active": len(active),
+        "unassigned": sum(1 for r in active if (r.get("owner") or "") in ("", "AML Investigations")),
+        "by_rule": dict(Counter(r["rule"] for r in active)),
+        "by_severity": dict(Counter(r["severity"] for r in active)),
+        "by_status": dict(Counter(r["status"] for r in rows)),
+        "by_priority": dict(Counter(r["priority"] for r in active)),
+        "by_owner": dict(Counter((r.get("owner") or "Unassigned") for r in active)),
+    }
 
 
 @app.get("/api/cases/{case_id}")
@@ -302,6 +354,8 @@ def create_note(case_id: str, body: NoteCreate,
 def transition(case_id: str, body: CaseTransition,
                role: str = Depends(require_roles("analyst", "reviewer"))) -> dict:
     _case_or_404(case_id)
+    if body.status == "closed" and not (body.reason or "").strip():
+        raise HTTPException(422, "Closing a case requires a non-empty rationale.")
     try:
         return {"case": store.transition_case(case_id, body.status, body.reason, role)}
     except PermissionError as exc:

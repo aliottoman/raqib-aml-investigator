@@ -17,13 +17,13 @@ Raqib is a portfolio-grade technical reference solution for human-governed finan
 | Minimal operations workbench | Five primary destinations: Overview, Alerts, Cases, Intelligence, and Architecture | Progressive disclosure keeps technical detail out of the core task flow |
 | Persona simulation | Analyst, MLRO Reviewer, Auditor, and Rule Administrator switcher | API and WebSocket actions enforce the selected simulated role; this is not authentication |
 | Deterministic alerting | Four configurable AML rules over a synthetic bank ledger | Rules create evidence-backed alerts; AI does not decide what constitutes a rule match |
-| Persistent case workflow | Additive SQLite schema for cases, runs, events, approvals, notes, SAR versions, and rule history | State is scoped by case and retained across page refreshes and app restarts |
+| Persistent case workflow | Additive SQLite schema for cases, runs, events, approvals, notes, SAR records, current rule configuration, and simulation runs | State is scoped by case and retained across page refreshes and app restarts; the local store is not presented as immutable or WORM-compliant |
 | Governed AI investigation | OCI Responses API, Conversations, function tools, and Code Interpreter | Every model-proposed ledger query requires explicit analyst approval bound to its run and tool call |
 | Separated retrieval paths | Trusted AML policy uses OCI embeddings and local cosine retrieval; customer evidence is read separately | Untrusted evidence is prompt-injection scanned before use |
-| Structured SAR workflow | Pydantic-validated SAR draft, required output PII scan, editing, submission, review, and version history | Analyst prepares and submits; MLRO Reviewer approves or requests changes |
+| Structured SAR workflow | Pydantic-validated SAR draft, required output PII scan, editing, submission, review, and persisted revisions | Analyst prepares and submits; MLRO Reviewer approves or requests changes; the product API and UI expose the latest revision, not a SAR-version browser |
 | Targeted Arabic support | Required Arabic narrative fields plus English and Arabic PDF exports | The operational UI remains English-first in this release |
-| Interactive intelligence | Operational analytics, versioned rule parameters, baseline comparison, and no-write simulations | Rule changes and simulations are restricted to the Rule Administrator persona |
-| Architecture explorer | Implemented and target OCI views, controls, runtime disclosure, and deployment profiles | Optional services are clearly marked as next or optional rather than presented as built |
+| Interactive intelligence | Operational analytics, current rule parameters with a revision counter, baseline comparison, and no-write simulations | Rule changes and simulations are restricted to the Rule Administrator persona; prior parameter sets are not exposed as rule history |
+| Architecture explorer | Implemented, adapter-tested, live-validated, target, and optional views with runtime disclosure and deployment profiles | Contract-tested adapters and historical live snapshots are distinguished from services deployed or live-validated in the current environment |
 | Automated verification | Backend unit, integration, API/WebSocket contract, security, evaluation, report, and opt-in live OCI checks; focused React component tests | Normal backend tests fail closed against accidental OCI calls and use isolated temporary data |
 
 The product principle is: **Rules detect. AI investigates. Humans decide.** A generated SAR is a draft; the application never represents generation as regulatory filing.
@@ -31,7 +31,8 @@ The product principle is: **Rules detect. AI investigates. Humans decide.** A ge
 ### Service and data-boundary disclosures
 
 - The seeded ledger, application state, policy files, case documents, and demo tape are local and fictional.
-- OCI managed Vector Stores and File Search are now available. Raqib intentionally retains its local policy retrieval path for portable demo mode, deterministic tests, and a clear adapter boundary; managed File Search is shown as a target option, not as an implemented feature.
+- Raqib includes an OCI managed Vector Store / File Search adapter behind the policy-search contract. The adapter is implemented and contract-tested with fakes, but no live managed-retrieval validation is recorded in this repository. Local OCI-embedding plus cosine retrieval remains the default for portable demo mode and deterministic tests.
+- The local SQLite database provides ordinary application persistence. This asset does not demonstrate database encryption, tamper-evident or immutable audit storage, WORM retention, or integrity-protected audit export.
 - OCI documents that xAI Grok models are hosted in an OCI data center in a tenancy provisioned for xAI and are managed by xAI. That is not the same as execution inside the customer's own tenancy.
 - The optional xAI `web_search` adverse-media step intentionally reaches the public web. Treat it as an explicit egress path, disable it for no-egress environments, or replace it with an approved licensed data provider.
 - Agentic APIs, individual models, and tools vary by region. Current OCI documentation lists agentic endpoints in Riyadh and notes that OCI OpenAI-compatible endpoints and tools are not available in Dubai. Verify the current model-by-region catalog before every deployment decision.
@@ -46,7 +47,7 @@ The product principle is: **Rules detect. AI investigates. Humans decide.** A ge
 3. Inspect evidence and approve or deny the proposed read-only ledger query.
 4. Review the prompt-injection control, policy citations, computed findings, and PII scan before the SAR draft appears.
 5. Edit and submit the draft, switch to **MLRO Reviewer**, then approve it or request changes.
-6. Switch to **Rule Administrator** and use **Intelligence** to simulate a parameter change before saving a version.
+6. Switch to **Rule Administrator** and use **Intelligence** to simulate a parameter change before saving the current configuration with an incremented revision counter.
 7. Open **Architecture** to compare what is implemented with the OCI deployment path and its regional profiles.
 
 Demo mode replays only the bundled flagship case. Configure live mode to investigate other alerts with the OCI agent. All data remains synthetic in both modes.
@@ -108,8 +109,9 @@ OCI Identity Domains → Hosted Generative AI Application ← Logging / Monitori
              ┌─────────────────┼──────────────────┐
              ▼                 ▼                  ▼
       OCI Responses API   Autonomous AI DB   Object Storage
-      Guardrails + tools  cases + governed   evidence + report
-      optional File Search     query path          versions
+      Guardrails + tools  cases + governed   evidence + report artifacts
+      File Search adapter      query path
+      (contract-tested; live validation not recorded)
 ```
 
 The page includes three discussion profiles: a Chicago showcase, a Riyadh deployment path, and a capability-constrained UAE-resident blueprint. These are architecture aids, not deployment guarantees. Confirm current regional availability, customer policy, data classification, and provider terms before selecting a profile.
@@ -150,7 +152,7 @@ raqib-aml-investigator/
 │   ├── redteam.py               # prompt-injection corpus + guardrail sweep
 │   ├── report.py                # EVALS.md generator
 │   └── __main__.py              # CLI: golden | redteam | report
-├── EVALS.md                     # generated evaluation report (real numbers)
+├── EVALS.md                     # provenance-separated evaluation snapshots
 ├── tests/
 │   ├── unit/                    # rules, ledger policy, and schema validation
 │   ├── integration/             # persistence, retrieval, tools, and PDF output
@@ -217,7 +219,7 @@ pip install -r requirements-test.txt
 .venv/bin/pytest -q
 ```
 
-`pytest.ini` enforces an 85% branch-coverage minimum across `src/`. The current baseline is **105 passing tests, 4 skipped opt-in live checks, and 86.26% branch coverage**. The normal suite replaces OCI client factories with fail-closed fakes, creates a fresh temporary SQLite database, and copies the bundled documents for isolation.
+`pytest.ini` enforces an 85% branch-coverage minimum across `src/`. The completed Phase 2 validation snapshot recorded **170 passing tests, 4 skipped opt-in live checks, and 88.83% branch coverage** on 2026-07-08. The normal suite replaces OCI client factories with fail-closed fakes, creates a fresh temporary SQLite database, and copies the bundled documents for isolation. Re-run the suite for the current count after making changes.
 
 Run the real OCI smoke checks only after intentionally configuring credentials:
 
@@ -235,7 +237,7 @@ npm ci
 npm test
 ```
 
-The Vitest and React Testing Library suite exercises client-side routing, persona permissions, the maker-checker SAR lifecycle, the current/target architecture switch, and interactive rule simulation. The current baseline is **5 passing UI tests**. Use `npm run test:watch` during UI development.
+The Vitest and React Testing Library suite exercises client-side routing, persona permissions, safe bulk triage, the maker-checker SAR lifecycle, investigation rendering, the current/target architecture switch, and interactive rule simulation. The completed 2026-07-08 Phase 2 snapshot recorded **13 passing UI tests across 7 files**; because the suite is growing, use `npm test` for the current total and `npm run test:watch` during UI development.
 
 **Develop the UI**
 
@@ -256,14 +258,16 @@ Model IDs change over time and may be deprecated or unavailable in a selected re
 ## Evaluation
 
 Raqib is measured, not vibed. The `evals/` harness scores the agent against a
-labelled corpus and red-teams the guardrail layer, writing a regenerable
-[`EVALS.md`](EVALS.md):
+labelled corpus and red-teams the guardrail layers. [`EVALS.md`](EVALS.md)
+keeps the last available live snapshot separate from the current deterministic
+offline sweep so results from different layers are not treated as equivalent:
 
 ```bash
-python -m evals redteam            # guardrail injection sweep (no model credits needed)
+python -m evals redteam --offline  # deterministic local layer 1b only; no OCI credentials
+python -m evals redteam            # combined OCI + local sweep when OCI Guardrails is configured
 python -m evals golden             # live golden-case suite (needs OPENAI_API_KEY_CHICAGO)
 python -m evals golden --repeat 3  # + verdict-variance calibration
-python -m evals report             # regenerate EVALS.md from both suites
+python -m evals report --offline   # regenerate a current-run report (replaces EVALS.md)
 ```
 
 - **Golden-case suite** — investigates labelled alerts end-to-end and scores each SAR
@@ -271,13 +275,15 @@ python -m evals report             # regenerate EVALS.md from both suites
   citations, and **numeric grounding** (every counterparty amount must reconcile to the
   ledger — the anti-hallucination check). Includes calibration cases the agent should
   *stand down* on, not just launders.
-- **Prompt-injection red-team** — 24 adversarial documents across 8 attack families
-  fired at the same `ApplyGuardrails` layer the agent uses; reports catch rate per
-  family and false-positive rate on benign documents. The guardrail sweep signs with
-  `~/.oci/config` (IAM), so it runs without the Responses API key.
-- **Defence in depth** — a missed guardrail catch is not a successful attack; the agent
-  is separately instructed to distrust document content. Layer-2 (agent behaviour under
-  attack) is measured by the golden suite.
+- **Prompt-injection red-team** — the current corpus contains 21 expected attacks
+  across 9 attack families plus 3 benign controls. Offline mode measures only the
+  deterministic local heuristic (layer 1b). With OCI Guardrails configured, the
+  default mode measures `max(OCI ApplyGuardrails, local heuristic)` and attributes
+  each catch to its owning layer. Neither result should be relabelled as the other.
+- **Defence in depth** — a missed layer-1 catch is not by itself a successful attack;
+  the agent is separately instructed to distrust document content. The historical
+  golden suite includes planted-injection cases, but it is a small outcome check, not
+  a comprehensive layer-2 adversarial evaluation.
 
 The scorers have their own deterministic unit tests (`tests/evals/`), so the numbers
 the report publishes are themselves tested.

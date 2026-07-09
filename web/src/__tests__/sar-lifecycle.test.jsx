@@ -45,6 +45,8 @@ describe('SAR lifecycle reconciliation', () => {
     await user.click(await screen.findByRole('button', { name: 'sar' }))
 
     await waitFor(() => expect(screen.getAllByText('pending review').length).toBeGreaterThan(0))
+    expect(screen.getByText('export ready')).toBeInTheDocument()
+    expect(screen.queryByText('filed')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Submit for review' })).not.toBeInTheDocument()
     expect(screen.getByText('Working copies are available for review before approval.')).toBeInTheDocument()
 

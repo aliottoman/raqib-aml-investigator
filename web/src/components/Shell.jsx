@@ -17,6 +17,8 @@ function NavIcon({ path }) {
 function PersonaSwitcher({ role, onRoleChange }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
+  const triggerRef = useRef(null)
+  const optionRefs = useRef([])
   useEffect(() => {
     const close = (event) => { if (!ref.current?.contains(event.target)) setOpen(false) }
     const escape = (event) => { if (event.key === 'Escape') setOpen(false) }
@@ -27,24 +29,52 @@ function PersonaSwitcher({ role, onRoleChange }) {
       document.removeEventListener('keydown', escape)
     }
   }, [])
+  useEffect(() => {
+    if (!open) return
+    const index = Math.max(0, Object.keys(ROLES).indexOf(role))
+    optionRefs.current[index]?.focus()
+  }, [open, role])
+  const closeMenu = ({ restoreFocus = false } = {}) => {
+    setOpen(false)
+    if (restoreFocus) triggerRef.current?.focus()
+  }
+  const handleMenuKeyDown = (event) => {
+    const options = optionRefs.current.filter(Boolean)
+    const current = Math.max(0, options.indexOf(document.activeElement))
+    let next = null
+    if (event.key === 'ArrowDown') next = (current + 1) % options.length
+    else if (event.key === 'ArrowUp') next = (current - 1 + options.length) % options.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = options.length - 1
+    else if (event.key === 'Escape') {
+      event.preventDefault()
+      closeMenu({ restoreFocus: true })
+      return
+    }
+    if (next !== null) {
+      event.preventDefault()
+      options[next]?.focus()
+    }
+  }
   const active = ROLES[role]
   return (
     <div className="persona" ref={ref}>
-      <button className="persona-trigger" onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open}>
+      <button ref={triggerRef} className="persona-trigger" onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open} aria-controls="persona-options">
         <span className="avatar">{active.initials}</span>
         <span className="persona-copy"><small>Viewing as</small><strong>{active.short}</strong></span>
         <span className="chevron" aria-hidden="true">⌄</span>
       </button>
       {open && (
-        <div className="persona-menu" role="listbox" aria-label="Demo persona">
+        <div id="persona-options" className="persona-menu" role="listbox" aria-label="Demo persona" onKeyDown={handleMenuKeyDown}>
           <div className="persona-note"><span>Simulation</span> Switch roles to preview governed workflows.</div>
-          {Object.entries(ROLES).map(([key, item]) => (
+          {Object.entries(ROLES).map(([key, item], index) => (
             <button
               key={key}
+              ref={(node) => { optionRefs.current[index] = node }}
               role="option"
               aria-selected={role === key}
               className={role === key ? 'selected' : ''}
-              onClick={() => { onRoleChange(key); setOpen(false) }}
+              onClick={() => { onRoleChange(key); closeMenu({ restoreFocus: true }) }}
             >
               <span className="avatar mini">{item.initials}</span>
               <span><strong>{item.label}</strong><small>{item.description}</small></span>
@@ -64,7 +94,7 @@ export default function Shell({ path, role, setRole, health, children }) {
     <div className="app-shell">
       <aside className="sidebar">
         <Link to="/overview" className="wordmark" aria-label="Raqib home">
-          <span className="brand-seal"><img src="/brand/raqib-mark.svg" alt="" /></span>
+          <span className="brand-seal"><img src="/brand/raqib-mark-inverse.svg" alt="" /></span>
           <span><strong>Raqib</strong><small>رقيب</small></span>
         </Link>
         <nav aria-label="Primary navigation">
@@ -86,16 +116,17 @@ export default function Shell({ path, role, setRole, health, children }) {
           <div className="location"><span>Financial Crime Operations</span><strong>{currentLabel}</strong></div>
           <div className="appbar-actions">
             <span className="demo-badge">Synthetic data</span>
+            <span className="mobile-context" aria-label="Synthetic data environment">Synthetic</span>
             <PersonaSwitcher role={role} onRoleChange={setRole} />
           </div>
         </header>
-        <main className="workspace" id="main-content">{children}</main>
+        <main className="workspace" id="main-content" tabIndex="-1">{children}</main>
         <footer>Fictional institution and synthetic data · Technical reference on Oracle Cloud Infrastructure</footer>
       </div>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
         {NAV.map(([key, label, icon]) => (
-          <Link key={key} to={`/${key}`} className={active === key ? 'active' : ''} aria-label={label}>
+          <Link key={key} to={`/${key}`} className={active === key ? 'active' : ''} aria-label={label} aria-current={active === key ? 'page' : undefined}>
             <NavIcon path={icon} /><span>{label === 'Intelligence' ? 'Intel' : label}</span>
           </Link>
         ))}

@@ -78,6 +78,19 @@ class ApprovalDecision(BaseModel):
     call_id: str | None = None
 
 
+class BulkTriage(BaseModel):
+    """One triage action applied across many cases from the queue."""
+    case_ids: list[str] = Field(min_length=1, max_length=200)
+    action: Literal["assign", "priority", "transition"]
+    owner: str | None = Field(default=None, max_length=120)
+    priority: Literal["urgent", "high", "medium", "low"] | None = None
+    status: Literal[
+        "open", "investigating", "draft_ready", "pending_review",
+        "approved", "changes_requested", "closed",
+    ] | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+
 def ev(type_: str, **kw) -> dict:
     """One WebSocket event. The UI switches on `type`."""
     return {"type": type_, **kw}

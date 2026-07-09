@@ -432,6 +432,11 @@ def transition_case(case_id: str, status: str, reason: str | None, actor_role: s
                     *, force: bool = False) -> dict:
     current = get_case(case_id)
     old = current["status"]
+    clean_reason = " ".join((reason or "").split()).strip()
+    if len(clean_reason) > 500:
+        raise ValueError("Case transition rationale cannot exceed 500 characters")
+    if status == "closed" and not clean_reason:
+        raise ValueError("Closing a case requires a non-empty rationale")
     if status == old:
         return current
     if not force and status not in TRANSITIONS.get(old, set()):
@@ -457,9 +462,109 @@ def transition_case(case_id: str, status: str, reason: str | None, actor_role: s
         con.commit()
     finally:
         con.close()
-    append_event(case_id, "case_transition", {"from": old, "to": status, "reason": reason or ""},
+    append_event(case_id, "case_transition", {"from": old, "to": status, "reason": clean_reason},
                  actor_role=actor_role)
     return get_case(case_id)
+
+
+PRIORITIES = ("urgent", "high", "medium", "low")
+
+
+def assign_case(case_id: str, owner: str, actor_role: str) -> dict:
+    """Set a case's owner (triage assignment), audited as a case event."""
+    current = get_case(case_id)
+    clean = " ".join((owner or "").split()).strip()
+    if not clean:
+        raise ValueError("Owner cannot be empty")
+    if len(clean) > 120:
+        raise ValueError("Owner cannot exceed 120 characters")
+    old = current.get("owner") or ""
+    if clean == old:
+        return current
+    now = utcnow()
+    con = _connect()
+    try:
+        con.execute("UPDATE cases SET owner=?, updated_at=? WHERE id=?", (clean, now, case_id))
+        con.commit()
+    finally:
+        con.close()
+    append_event(
+        case_id,
+        "case_assigned",
+        {"from": old or "Unassigned", "to": clean, "owner": clean},
+        actor_role=actor_role,
+    )
+    return get_case(case_id)
+
+
+def reprioritize_case(case_id: str, priority: str, actor_role: str) -> dict:
+    """Change a case's triage priority, audited as a case event."""
+    if priority not in PRIORITIES:
+        raise ValueError(f"priority must be one of: {', '.join(PRIORITIES)}")
+    current = get_case(case_id)
+    old = current["priority"]
+    if priority == old:
+        return current
+    now = utcnow()
+    con = _connect()
+    try:
+        con.execute("UPDATE cases SET priority=?, updated_at=? WHERE id=?", (priority, now, case_id))
+        con.commit()
+    finally:
+        con.close()
+    append_event(case_id, "case_reprioritized", {"from": old, "to": priority}, actor_role=actor_role)
+    return get_case(case_id)
+
+
+def apply_bulk(case_ids: list[str], action: str, *, actor_role: str, owner: str | None = None,
+               priority: str | None = None, status: str | None = None,
+               reason: str | None = None) -> dict:
+    """Apply one triage action across many cases. Per-case failures (unknown
+    case, illegal transition, separation-of-duties) are collected as skips
+    rather than aborting the whole batch."""
+    if action == "transition" and status == "closed" and not (reason or "").strip():
+        raise ValueError("Closing cases requires a non-empty rationale")
+    updated, skipped = [], []
+    for case_id in dict.fromkeys(case_ids):  # dedupe, preserve order
+        try:
+            if action == "assign":
+                assign_case(case_id, owner or "", actor_role)
+            elif action == "priority":
+                reprioritize_case(case_id, priority or "", actor_role)
+            elif action == "transition":
+                transition_case(case_id, status or "", reason, actor_role)
+            else:
+                raise ValueError(f"Unknown bulk action: {action}")
+            updated.append(case_id)
+        except KeyError:
+            skipped.append({"case_id": case_id, "reason": "unknown case"})
+        except (ValueError, PermissionError) as exc:
+            skipped.append({"case_id": case_id, "reason": str(exc)})
+    return {"action": action, "updated": updated, "skipped": skipped,
+            "updated_count": len(updated), "skipped_count": len(skipped)}
+
+
+def reset_demo(actor_role: str) -> dict:
+    """Demo control: rewind every case that has left the queue back to 'open'
+    so the flagship critical/high signals reappear for another walkthrough.
+
+    Only case and alert status is rewound. SAR revisions, case notes, and the
+    event history are preserved, and nothing here represents a regulatory
+    action. Reusing transition_case(force=True) keeps the alert-status mapping
+    and the audit event identical to a single manual reopen."""
+    ensure_schema()
+    con = _connect(readonly=True)
+    try:
+        ids = [row["id"] for row in con.execute(
+            "SELECT id FROM cases WHERE status != 'open' ORDER BY id"
+        ).fetchall()]
+    finally:
+        con.close()
+    for case_id in ids:
+        transition_case(case_id, "open",
+                        "Demo reset — case reopened to the active queue",
+                        actor_role, force=True)
+    return {"reopened": ids, "reopened_count": len(ids)}
 
 
 def start_run(case_id: str, engine: str, actor_role: str) -> dict:

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, can } from '../api.js'
 import { EmptyState, ErrorState, PageSkeleton, PermissionHint, Spinner } from '../components/States.jsx'
 
@@ -11,15 +11,16 @@ const FALLBACK_RULES = [
 
 const number = (value) => Number(value ?? 0)
 
-function LineChart({ points }) {
-  const values = points.length ? points : [{ label: 'Jan', value: 8 }, { label: 'Feb', value: 12 }, { label: 'Mar', value: 10 }, { label: 'Apr', value: 16 }, { label: 'May', value: 14 }, { label: 'Jun', value: 21 }]
+function LineChart({ points, label }) {
+  if (!points.length) return <div className="chart-empty" role="status">No activity history is available for this period.</div>
+  const values = points
   const w = 720, h = 210, px = 24, py = 26
   const max = Math.max(...values.map((point) => number(point.value)), 1)
   const coords = values.map((point, index) => ({ x: px + (index * (w - px * 2)) / Math.max(values.length - 1, 1), y: h - py - (number(point.value) / max) * (h - py * 2), ...point }))
   const line = coords.map((point, i) => `${i ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ')
   const area = `${line} L ${coords.at(-1).x} ${h - py} L ${coords[0].x} ${h - py} Z`
   return (
-    <svg className="line-chart" viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Alert volume trend">
+    <svg className="line-chart" viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`${label}: ${values.map((point) => `${point.label} ${point.value}`).join(', ')}`}>
       {[0, .25, .5, .75, 1].map((ratio) => <line key={ratio} x1={px} x2={w - px} y1={py + ratio * (h - py * 2)} y2={py + ratio * (h - py * 2)} className="grid-line" />)}
       <path d={area} className="chart-area" /><path d={line} className="chart-line" />
       {coords.map((point) => <g key={point.label}><circle cx={point.x} cy={point.y} r="4" /><text x={point.x} y={h - 5} textAnchor="middle">{point.label}</text><title>{point.label}: {point.value}</title></g>)}
@@ -28,7 +29,8 @@ function LineChart({ points }) {
 }
 
 function Donut({ segments }) {
-  const items = segments.length ? segments : [{ label: 'Escalated', value: 4, tone: 'critical' }, { label: 'Investigating', value: 7, tone: 'high' }, { label: 'Closed', value: 11, tone: 'clear' }]
+  if (!segments.length) return <div className="chart-empty" role="status">No case outcomes are available yet.</div>
+  const items = segments
   const total = items.reduce((sum, item) => sum + number(item.value), 0) || 1
   let offset = 0
   return (
@@ -49,7 +51,9 @@ function Donut({ segments }) {
 }
 
 function Analytics({ data, period, setPeriod }) {
-  const trend = data.alert_trend ?? data.monthly_alerts ?? data.monthly_activity ?? data.trend ?? []
+  const alertTrend = data.alert_trend ?? data.monthly_alerts ?? data.trend
+  const trend = alertTrend ?? data.monthly_activity ?? []
+  const trendLabel = alertTrend ? 'Alerts raised' : 'Transactions observed'
   const points = trend.map((item) => ({ label: item.label ?? item.month ?? item.date, value: item.value ?? item.count ?? item.alerts ?? item.transaction_count }))
   const outcomesRaw = data.case_outcomes ?? data.cases_by_status ?? data.outcomes ?? []
   const outcomes = Array.isArray(outcomesRaw)
@@ -60,18 +64,21 @@ function Analytics({ data, period, setPeriod }) {
   const kpis = data.kpis ?? data.summary ?? data
   return (
     <div className="analytics-view">
-      <div className="subpage-head"><div><div className="eyebrow">Operational intelligence</div><h2>Monitoring performance</h2></div><div className="segment-control" aria-label="Analytics period">{['30d', '90d', '180d'].map((value) => <button className={period === value ? 'active' : ''} key={value} onClick={() => setPeriod(value)}>{value}</button>)}</div></div>
+      <div className="subpage-head"><div><div className="eyebrow">Operational intelligence</div><h2>Monitoring performance</h2></div><div className="segment-control" role="group" aria-label="Analytics period">{['30d', '90d', '180d'].map((value) => <button className={period === value ? 'active' : ''} aria-pressed={period === value} key={value} onClick={() => setPeriod(value)}>{value}</button>)}</div></div>
       <div className="insight-strip">
         <div><span>Customers monitored</span><strong>{kpis.customers_monitored ?? '—'}</strong><small>synthetic customer book</small></div>
-        <div><span>Transactions observed</span><strong>{number(kpis.transactions_monitored).toLocaleString()}</strong><small>across the evaluation window</small></div>
+        <div><span>Transactions observed</span><strong>{kpis.transactions_monitored == null ? '—' : number(kpis.transactions_monitored).toLocaleString()}</strong><small>across the evaluation window</small></div>
         <div><span>Active alerts</span><strong>{kpis.active_alerts ?? '—'}</strong><small className="positive">deterministic rule signals</small></div>
         <div><span>Cases created</span><strong>{kpis.cases ?? '—'}</strong><small>durable investigation records</small></div>
       </div>
       <div className="analytics-grid">
-        <section className="surface trend-card"><div className="section-head"><div><div className="eyebrow">Signal volume</div><h3>Alerts raised</h3></div><span className="chip sage">stable</span></div><LineChart points={points} /></section>
+        <section className="surface trend-card"><div className="section-head"><div><div className="eyebrow">Observed volume</div><h3>{trendLabel}</h3></div><span className="chip plain">synthetic window</span></div><LineChart points={points} label={trendLabel} /></section>
         <section className="surface outcome-card"><div className="eyebrow">Disposition</div><h3>Case outcomes</h3><Donut segments={outcomes} /></section>
-        <section className="surface rule-performance"><div className="section-head"><div><div className="eyebrow">Detection quality</div><h3>Rule performance</h3></div><span className="muted">Alerts · conversion</span></div>
-          <div className="rule-bars">{(rules.length ? rules : FALLBACK_RULES.map((r, i) => ({ name: r.name, alerts: [12, 7, 5, 3][i], conversion_rate: [42, 29, 20, 8][i] }))).map((item) => <div key={item.id ?? item.rule_id ?? item.name}><div><span>{item.name ?? item.label ?? item.rule_id}</span><strong>{item.alerts ?? item.count} <small>· {item.conversion_rate ?? item.conversion ?? item.open ?? 0} open</small></strong></div><i><b style={{ width: `${number(item.alerts ?? item.count) / maxRule * 100}%` }} /></i></div>)}</div>
+        <section className="surface rule-performance"><div className="section-head"><div><div className="eyebrow">Detection quality</div><h3>Rule performance</h3></div><span className="muted">Alerts · case outcome</span></div>
+          {rules.length ? <div className="rule-bars">{rules.map((item) => {
+            const secondary = item.open != null ? `${item.open} open` : item.conversion_rate != null ? `${item.conversion_rate}% converted` : 'outcome unavailable'
+            return <div key={item.id ?? item.rule_id ?? item.name}><div><span>{item.name ?? item.label ?? item.rule_id}</span><strong>{item.alerts ?? item.count} <small>· {secondary}</small></strong></div><i><b style={{ width: `${number(item.alerts ?? item.count) / maxRule * 100}%` }} /></i></div>
+          })}</div> : <div className="chart-empty" role="status">No rule performance data is available yet.</div>}
         </section>
       </div>
     </div>
@@ -83,8 +90,36 @@ function RuleDrawer({ rule, role, onClose, onUpdated }) {
   const [simulation, setSimulation] = useState(null)
   const [working, setWorking] = useState(null)
   const [error, setError] = useState(null)
+  const drawerRef = useRef(null)
+  const closeRef = useRef(null)
   const editable = can(role, 'edit_rule')
   useEffect(() => { setCandidate({ ...(rule.parameters ?? {}) }); setSimulation(null); setError(null) }, [rule])
+  useEffect(() => {
+    const previous = document.activeElement
+    closeRef.current?.focus()
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = [...(drawerRef.current?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])') ?? [])]
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable.at(-1)
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      previous?.focus?.()
+    }
+  }, [onClose])
   const simulate = async () => {
     setWorking('simulate'); setError(null)
     try { setSimulation(await api(`/api/rules/${encodeURIComponent(rule.id)}/simulate`, { method: 'POST', body: { parameters: candidate }, role })) }
@@ -97,10 +132,10 @@ function RuleDrawer({ rule, role, onClose, onUpdated }) {
   }
   return (
     <div className="drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <aside className="rule-drawer" role="dialog" aria-modal="true" aria-labelledby="rule-title">
-        <div className="drawer-head"><div><span className={`severity-label ${rule.severity}`}><i />{rule.severity}</span><h2 id="rule-title">{rule.name}</h2><span className="mono">{rule.id} · {rule.policy_reference}</span></div><button className="icon-button" aria-label="Close rule editor" onClick={onClose}>×</button></div>
+      <aside ref={drawerRef} className="rule-drawer" role="dialog" aria-modal="true" aria-labelledby="rule-title" aria-describedby="rule-description">
+        <div className="drawer-head"><div><span className={`severity-label ${rule.severity}`}><i />{rule.severity}</span><h2 id="rule-title">{rule.name}</h2><span className="mono">{rule.id} · {rule.policy_reference}</span></div><button ref={closeRef} className="icon-button" aria-label="Close rule editor" onClick={onClose}>×</button></div>
         <div className="drawer-scroll">
-          <section><div className="eyebrow">Detection intent</div><p>{rule.description}</p><div className="rule-meta"><span>Category<strong>{rule.category ?? 'Behaviour monitoring'}</strong></span><span>Type<strong>Deterministic SQL</strong></span><span>State<strong>{rule.enabled ? 'Enabled' : 'Disabled'}</strong></span></div></section>
+          <section><div className="eyebrow">Detection intent</div><p id="rule-description">{rule.description}</p><div className="rule-meta"><span>Category<strong>{rule.category ?? 'Behaviour monitoring'}</strong></span><span>Type<strong>Deterministic SQL</strong></span><span>State<strong>{rule.enabled ? 'Enabled' : 'Disabled'}</strong></span></div></section>
           <section><div className="eyebrow">Parameters</div><div className="parameter-grid">{Object.entries(candidate).map(([key, value]) => <label key={key}><span>{key.replaceAll('_', ' ')}</span><input type={typeof value === 'number' ? 'number' : 'text'} value={value} disabled={!editable} onChange={(e) => setCandidate({ ...candidate, [key]: typeof value === 'number' ? Number(e.target.value) : e.target.value })} /></label>)}</div></section>
           {!editable && <PermissionHint>Rule parameters are read-only for this persona. Switch to <strong>Rule Administrator</strong> to simulate changes.</PermissionHint>}
           {error && <div className="permission-hint danger" role="alert">{error}</div>}
@@ -113,7 +148,8 @@ function RuleDrawer({ rule, role, onClose, onUpdated }) {
 }
 
 function Rules({ data, role, reload }) {
-  const rules = (data.rules ?? data ?? FALLBACK_RULES).map((item) => {
+  const source = Array.isArray(data?.rules) ? data.rules : Array.isArray(data) ? data : []
+  const rules = source.map((item) => {
     const id = item.id ?? item.rule_id ?? item.rule
     const reference = FALLBACK_RULES.find((rule) => rule.id === id)
     return {
@@ -168,8 +204,10 @@ export default function IntelligencePage({ role }) {
   return (
     <div className="page intelligence-page">
       <header className="page-head compact"><div><div className="eyebrow">Control intelligence</div><h1>Analytics & rules</h1><p>Measure outcomes, then improve the controls that shape them.</p></div></header>
-      <nav className="view-tabs" aria-label="Intelligence views"><button className={tab === 'analytics' ? 'active' : ''} onClick={() => setTab('analytics')}>Analytics</button><button className={tab === 'rules' ? 'active' : ''} onClick={() => setTab('rules')}>Rule administration</button></nav>
-      {tab === 'analytics' ? <Analytics data={analytics} period={period} setPeriod={setPeriod} /> : <Rules data={rules} role={role} reload={load} />}
+      <nav className="view-tabs" role="tablist" aria-label="Intelligence views"><button id="analytics-tab" role="tab" aria-controls="analytics-panel" aria-selected={tab === 'analytics'} className={tab === 'analytics' ? 'active' : ''} onClick={() => setTab('analytics')}>Analytics</button><button id="rules-tab" role="tab" aria-controls="rules-panel" aria-selected={tab === 'rules'} className={tab === 'rules' ? 'active' : ''} onClick={() => setTab('rules')}>Rule administration</button></nav>
+      {tab === 'analytics'
+        ? <div id="analytics-panel" role="tabpanel" aria-labelledby="analytics-tab"><Analytics data={analytics} period={period} setPeriod={setPeriod} /></div>
+        : <div id="rules-panel" role="tabpanel" aria-labelledby="rules-tab"><Rules data={rules} role={role} reload={load} /></div>}
     </div>
   )
 }

@@ -75,6 +75,78 @@ def test_invalid_notes_are_rejected_without_partial_writes(screened_cases, text:
     assert store.list_events(bankdb.ALERT_ID) == []
 
 
+def test_assign_and_reprioritize_are_normalized_and_audited(screened_cases):
+    assigned = store.assign_case(bankdb.ALERT_ID, "  Sara   Al Maktoum ", "analyst")
+    assert assigned["owner"] == "Sara Al Maktoum"
+    reprioritized = store.reprioritize_case(bankdb.ALERT_ID, "high", "analyst")
+    assert reprioritized["priority"] == "high"
+
+    case_events = store.list_events(bankdb.ALERT_ID)
+    events = {e["type"] for e in case_events}
+    assert {"case_assigned", "case_reprioritized"} <= events
+    assignment = next(event for event in case_events if event["type"] == "case_assigned")
+    assert assignment["payload"] == {
+        "from": "AML Investigations",
+        "to": "Sara Al Maktoum",
+        "owner": "Sara Al Maktoum",
+    }
+
+    with pytest.raises(ValueError):
+        store.assign_case(bankdb.ALERT_ID, "   ", "analyst")
+    with pytest.raises(ValueError):
+        store.reprioritize_case(bankdb.ALERT_ID, "urgentt", "analyst")
+
+
+def test_apply_bulk_updates_valid_cases_and_collects_skips(screened_cases):
+    ids = ["RQB-2026-0347", "RQB-2026-0401", "NO-SUCH-CASE"]
+    result = store.apply_bulk(ids, "assign", actor_role="analyst", owner="Triage Desk A")
+
+    assert set(result["updated"]) == {"RQB-2026-0347", "RQB-2026-0401"}
+    assert result["skipped"] == [{"case_id": "NO-SUCH-CASE", "reason": "unknown case"}]
+    assert result["updated_count"] == 2 and result["skipped_count"] == 1
+    assert store.get_case("RQB-2026-0347")["owner"] == "Triage Desk A"
+
+
+def test_apply_bulk_transition_respects_separation_of_duties(screened_cases):
+    # A reviewer cannot start an investigation — skipped, not applied.
+    blocked = store.apply_bulk(["RQB-2026-0347"], "transition",
+                               actor_role="reviewer", status="investigating")
+    assert blocked["updated"] == []
+    assert blocked["skipped"][0]["case_id"] == "RQB-2026-0347"
+    assert store.get_case("RQB-2026-0347")["status"] == "open"
+
+    # An analyst can bulk-close false positives with a reason.
+    closed = store.apply_bulk(["RQB-2026-0401", "RQB-2026-0455"], "transition",
+                              actor_role="analyst", status="closed", reason="false positive")
+    assert set(closed["updated"]) == {"RQB-2026-0401", "RQB-2026-0455"}
+    assert store.get_case("RQB-2026-0401")["status"] == "closed"
+
+    with pytest.raises(ValueError, match="rationale"):
+        store.apply_bulk([bankdb.ALERT_ID], "transition", actor_role="analyst", status="closed")
+    assert store.get_case(bankdb.ALERT_ID)["status"] == "open"
+
+
+def test_reset_demo_reopens_resolved_cases_and_preserves_history(screened_cases):
+    # Resolve two of the high-severity cases and leave a note behind.
+    store.apply_bulk(["RQB-2026-0347", "RQB-2026-0357"], "transition",
+                     actor_role="analyst", status="closed", reason="worked and closed")
+    store.add_note("RQB-2026-0347", "keep this note", "analyst")
+    assert store.get_case("RQB-2026-0347")["status"] == "closed"
+
+    result = store.reset_demo(actor_role="rule_admin")
+
+    assert set(result["reopened"]) == {"RQB-2026-0347", "RQB-2026-0357"}
+    assert result["reopened_count"] == 2
+    reopened = store.get_case("RQB-2026-0347")
+    assert reopened["status"] == "open"
+    assert reopened["alert_status"] == "open"
+    assert store.get_case("RQB-2026-0357")["status"] == "open"
+    # History is preserved — the reset rewinds status only, it deletes nothing.
+    assert any(note["text"] == "keep this note" for note in reopened["notes"])
+    # Idempotent: with the queue already open, a second reset reopens nothing.
+    assert store.reset_demo(actor_role="rule_admin") == {"reopened": [], "reopened_count": 0}
+
+
 def test_case_transitions_enforce_state_machine_and_separation_of_duties(screened_cases):
     investigating = store.transition_case(
         bankdb.ALERT_ID, "investigating", "Started review", "analyst"
@@ -87,6 +159,9 @@ def test_case_transitions_enforce_state_machine_and_separation_of_duties(screene
 
     with pytest.raises(PermissionError, match="reviewer"):
         store.transition_case(bankdb.ALERT_ID, "approved", None, "analyst", force=True)
+
+    with pytest.raises(ValueError, match="rationale"):
+        store.transition_case(bankdb.ALERT_ID, "closed", None, "analyst")
 
 
 def test_runs_and_events_survive_reconnect_and_support_cursor_paging(screened_cases):

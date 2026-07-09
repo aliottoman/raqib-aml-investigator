@@ -39,8 +39,9 @@ describe('rule administration', () => {
     render(<IntelligencePage role="rule_admin" />)
 
     expect(await screen.findByRole('heading', { name: 'Analytics & rules' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Rule administration' }))
-    await user.click(screen.getByRole('button', { name: `Open ${RULE.name}` }))
+    await user.click(screen.getByRole('tab', { name: 'Rule administration' }))
+    const openRule = screen.getByRole('button', { name: `Open ${RULE.name}` })
+    await user.click(openRule)
 
     const drawer = screen.getByRole('dialog', { name: RULE.name })
     const minimumDeposits = within(drawer).getByRole('spinbutton', { name: /minimum deposits/i })
@@ -67,5 +68,9 @@ describe('rule administration', () => {
         window_business_days: 10,
       },
     })
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: RULE.name })).not.toBeInTheDocument()
+    expect(openRule).toHaveFocus()
   })
 })

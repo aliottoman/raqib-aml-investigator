@@ -17,6 +17,8 @@ describe('role personas', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: 'Alert queue' })).toBeInTheDocument()
+    expect(document.title).toBe('Alerts · Raqib')
+    expect(screen.getByRole('main')).toHaveFocus()
     expect(screen.getByRole('button', { name: 'Run screening' })).toBeEnabled()
 
     await user.click(screen.getByRole('button', { name: /Viewing as\s*Analyst/i }))

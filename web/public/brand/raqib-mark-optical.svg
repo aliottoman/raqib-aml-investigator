@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Raqib compact observer mark</title>
+  <desc id="desc">The Raqib observer mark simplified for small sizes.</desc>
+  <g fill="#20231F">
+    <path d="M12 9h20c-9 5-13 12-13 23v2c0 10 4 17 12 22-13-3-19-11-19-24V9Z"/>
+    <path d="M52 55H32c9-5 13-12 13-23v-2c0-10-4-17-12-22 13 3 19 11 19 24v23Z"/>
+  </g>
+  <circle cx="32" cy="32" r="4.75" fill="#B95736"/>
+</svg>

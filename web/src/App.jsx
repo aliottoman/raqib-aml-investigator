@@ -15,6 +15,17 @@ function getInitialRole() {
   return saved && ROLES[saved] ? saved : 'analyst'
 }
 
+function pageTitle(path) {
+  if (path.startsWith('/cases/')) return 'Case workspace'
+  return {
+    '/overview': 'Overview',
+    '/alerts': 'Alerts',
+    '/cases': 'Cases',
+    '/intelligence': 'Intelligence',
+    '/architecture': 'Architecture',
+  }[path] ?? 'Workspace not found'
+}
+
 export default function App() {
   const path = useRoute()
   const [role, setRoleState] = useState(getInitialRole)
@@ -30,6 +41,10 @@ export default function App() {
       api('/api/session', { role }).catch(() => null),
     ]).then(([status]) => setHealth(status)).catch(() => setHealth({ live_available: false }))
   }, [role])
+  useEffect(() => {
+    document.title = `${pageTitle(path)} · Raqib`
+    document.getElementById('main-content')?.focus({ preventScroll: true })
+  }, [path])
 
   let page
   if (path === '/overview') page = <OverviewPage role={role} />

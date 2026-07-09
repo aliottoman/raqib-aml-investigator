@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" role="img" aria-labelledby="title desc">
-  <title id="title">Raqib observer mark</title>
-  <desc id="desc">Two controlled boundaries surrounding a human checkpoint.</desc>
-  <g fill="#20231F">
+  <title id="title">Raqib observer mark, inverse</title>
+  <desc id="desc">Two light controlled boundaries surrounding a human checkpoint.</desc>
+  <g fill="#F7F2E9">
     <path d="M117 64H245C171 103 137 165 137 246v17c0 73 28 132 86 174-70-25-106-80-106-166V64Z"/>
     <path d="M363 416H235c74-39 108-101 108-182v-17c0-73-28-132-86-174 70 25 106 80 106 166v207Z"/>
   </g>
-  <circle cx="240" cy="240" r="31" fill="#B95736"/>
+  <circle cx="240" cy="240" r="31" fill="#D87553"/>
 </svg>
