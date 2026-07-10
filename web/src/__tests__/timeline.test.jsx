@@ -59,4 +59,27 @@ describe('investigation timeline', () => {
     expect(screen.getByText('Gold-invoicing inquiry noted.')).toBeInTheDocument()
     expect(screen.queryByText('enrich_counterparty_context')).not.toBeInTheDocument()
   })
+
+  it('shows a running status header naming the active capability and step', () => {
+    render(
+      <Timeline embedded running engine="live" approve={() => {}}
+        events={[
+          { type: 'step', n: 2 },
+          { type: 'tool_call', id: 't1', name: 'query_bank_ledger', args: { sql: 'SELECT 1', purpose: 'check' } },
+        ]} />,
+    )
+    expect(screen.getByText(/Querying the bank ledger/)).toBeInTheDocument()
+    expect(screen.getByText(/step 2/)).toBeInTheDocument()
+  })
+
+  it('surfaces the pending SQL approval prominently in the status header', () => {
+    render(
+      <Timeline embedded running engine="live" approve={() => {}}
+        events={[
+          { type: 'tool_call', id: 't1', name: 'query_bank_ledger', args: { sql: 'SELECT 1', purpose: 'check' } },
+          { type: 'approval_request', id: 't1', sql: 'SELECT 1', purpose: 'check' },
+        ]} />,
+    )
+    expect(screen.getByText('Awaiting your approval')).toBeInTheDocument()
+  })
 })

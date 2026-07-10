@@ -110,6 +110,17 @@ CUSTOMERS = [
      "Freight forwarder; DP World and inland-haulage settlements."),
     (1094, "Amber Fintech Solutions FZE", "Free-zone company", "AE", "Medium", 200_000, "2024-11-02",
      "Software and payments consultancy; cross-border vendor payments."),
+    # ── Phase 4 extension (append-only) — deepen the critical/high queue ──────
+    (1101, "Meridian Scrap & Alloys LLC", "LLC", "AE", "Medium", 300_000, "2023-02-11",
+     "Base-metals recycler, Sharjah; walk-in cash counter sales."),
+    (1103, "Crescent Dental Supplies LLC", "LLC", "AE", "Low", 160_000, "2020-04-14",
+     "Dental consumables distributor; clinic receivables, card-heavy."),
+    (1105, "Vantage Trade Bridge FZE", "Free-zone company", "AE", "Medium", 210_000, "2025-01-20",
+     "General trading, DMCC; cross-border supplier settlements."),
+    (1107, "Skyline Glass & Aluminium", "LLC", "AE", "Low", 240_000, "2019-09-30",
+     "Facade fabricator; project-based contractor inflows."),
+    (1109, "Desert Gold Exchange LLC", "LLC", "AE", "High", 280_000, "2024-06-03",
+     "Gold and bullion retailer, Deira; high cash throughput."),
 ]
 
 
@@ -213,6 +224,7 @@ def _seed_ordinary(rows: list, account_id: int, customer: tuple, rng: random.Ran
 _WATCHLIST_TARGET = {
     1072: ("Nordwind Holdings AG", "CH", "PO-5521 fit-out materials"),
     1094: ("Volga Metallhandel OOO", "RU", "vendor settlement — infra build"),
+    1105: ("Transcaspian Metals FZCO", "AE", "PO-7788 alloy consignment"),
 }
 
 
@@ -273,6 +285,9 @@ _ANOMALY_SEEDERS = {
     1072: _seed_watchlist_wire,
     1085: _seed_dormant,
     1094: _seed_watchlist_wire,
+    1101: _seed_structuring,      # Phase 4: +critical (CASH-VELOCITY-04)
+    1105: _seed_watchlist_wire,   # Phase 4: +high (WATCHLIST-PROX-01)
+    1109: _seed_structuring,      # Phase 4: +critical (CASH-VELOCITY-04)
 }
 
 
@@ -314,6 +329,8 @@ def build(path=None) -> None:
          "Zurich-registered holding with no operating footprint; flagged in a 2025 correspondent RFI."),
         ("Volga Metallhandel OOO", "Internal Watchlist — Secondary Sanctions Exposure", "Entity",
          "Metals trader with ownership ties to a designated intermediary; enhanced due diligence mandatory."),
+        ("Transcaspian Metals FZCO", "Internal Watchlist — Shell Indicators", "Entity",
+         "Free-zone metals shell with no operating footprint; correspondent-bank RFI in 2025, enhanced due diligence per §6.1."),
     ])
     con.commit()
     con.close()

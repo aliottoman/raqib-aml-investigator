@@ -228,6 +228,10 @@ export default function CasePage({ caseId, role, health }) {
   const data = detailToCaseData(detail)
   const status = detail.case_status ?? detail.status ?? data.alert.status ?? 'open'
   const events = investigation.events.length ? investigation.events : storedEvents
+  // Show the timeline only when a run exists (streaming, persisted, or on the
+  // server). Audit-only events (notes, transitions) must not hide the "Start
+  // investigation" entry point — e.g. after a demo reset clears the run.
+  const hasInvestigation = investigation.running || !!detail.latest_run || events.some((e) => e.run_id)
   // A run now outlives the socket that started it. Offer to reattach when this
   // socket dropped mid-run, or when the server still holds a running one.
   const droppedMidRun = investigation.connection === 'disconnected' && investigation.runId && !runDone
@@ -246,14 +250,14 @@ export default function CasePage({ caseId, role, health }) {
       </nav>
 
       <div className="case-content">
-        {tab === 'overview' && <Dossier caseData={data} engine={engine} embedded canInvestigate={can(role, 'investigate')} onStart={can(role, 'investigate') ? () => { setTab('investigation'); investigation.start(engine, caseId) } : undefined} />}
+        {tab === 'overview' && <Dossier caseData={data} engine={engine} embedded role={role} canInvestigate={can(role, 'investigate')} onStart={can(role, 'investigate') ? () => { setTab('investigation'); investigation.start(engine, caseId) } : undefined} />}
         {tab === 'investigation' && resumableRunId && can(role, 'investigate') && (
           <div className="reconnect-banner" role="status">
             <span>A governed investigation is running for this case. Reconnect to follow it live and approve queries.</span>
             <button className="btn" onClick={() => investigation.resume(resumableRunId)}>Reconnect to live run</button>
           </div>
         )}
-        {tab === 'investigation' && (events.length || investigation.running ? (
+        {tab === 'investigation' && (hasInvestigation ? (
           <Timeline events={events} running={investigation.running} engine={engine} approve={investigation.approve} caseData={data} embedded canApprove={can(role, 'approve_sql')} />
         ) : (
           <EmptyState eyebrow="Governed investigation" title="This case has not been investigated" body="Raqib will gather policy, ledger, watchlist, document, and media evidence while keeping SQL execution under human control." action={can(role, 'investigate') ? <button className="btn primary" onClick={() => investigation.start(engine, caseId)}>Start investigation</button> : <PermissionHint>Switch to the AML Analyst persona to start an investigation.</PermissionHint>} />

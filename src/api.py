@@ -353,6 +353,46 @@ def create_note(case_id: str, body: NoteCreate,
         raise HTTPException(422, str(exc)) from exc
 
 
+_DOCUMENT_LABELS = {
+    "kyc_profile": "KYC onboarding profile",
+    "wire_memo": "Customer wire authorization memo",
+}
+
+
+@app.get("/api/cases/{case_id}/documents")
+def case_documents(case_id: str) -> dict:
+    """Documents on file for the case's customer (customer-submitted, untrusted)."""
+    case = _case_or_404(case_id)
+    from src import tools
+    cid = int(case["customer_id"])
+    docs = [{"name": name, "label": label}
+            for name, label in _DOCUMENT_LABELS.items()
+            if "error" not in tools.read_case_document(name, cid)]
+    return {"documents": docs, "extraction_backend": config.extraction_backend()}
+
+
+@app.post("/api/cases/{case_id}/documents/{name}/extract")
+def extract_case_document(case_id: str, name: str) -> dict:
+    """Showcase multimodal extraction outside a live run: structure a customer
+    document and screen the transcript. Uses the deterministic local heuristic
+    (guardrails layer 1b) so it works with zero credentials, in any mode."""
+    case = _case_or_404(case_id)
+    from src import guardrails, tools
+    result = tools.extract_document(name, int(case["customer_id"]))
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+    text = result.get("text", "")
+    return {
+        "name": result["name"],
+        "doc_type": result["doc_type"],
+        "fields": result["fields"],
+        "backend": result["backend"],
+        "char_count": len(text),
+        "excerpt": text[:600],
+        "guardrail": guardrails.heuristic_scan_document(text),
+    }
+
+
 @app.post("/api/cases/{case_id}/transition")
 def transition(case_id: str, body: CaseTransition,
                role: str = Depends(require_roles("analyst", "reviewer"))) -> dict:

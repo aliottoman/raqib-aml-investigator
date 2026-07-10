@@ -30,7 +30,7 @@ def test_product_schema_is_additive_idempotent_and_preserves_ledger():
         )}
         migration_count = con.execute("SELECT COUNT(*) FROM app_migrations").fetchone()[0]
 
-    assert before == 1079
+    assert before == 1410
     assert bankdb.execute_readonly("SELECT COUNT(*) AS n FROM transactions")["rows"][0]["n"] == before
     assert {
         "cases", "investigation_runs", "case_events", "case_notes", "approvals",
@@ -40,11 +40,12 @@ def test_product_schema_is_additive_idempotent_and_preserves_ledger():
 
 
 def test_screening_syncs_persistent_cases(screened_cases):
-    # The four curated cases plus one per rule from the portfolio extension.
+    # The four curated cases plus the portfolio extensions (Phase 4 adds two
+    # more critical CASH-VELOCITY cases and one more high WATCHLIST case).
     assert {case["id"] for case in screened_cases} == {
-        "RQB-2026-0347", "RQB-2026-0357", "RQB-2026-0364", "RQB-2026-0371",
-        "RQB-2026-0401", "RQB-2026-0422", "RQB-2026-0428", "RQB-2026-0444",
-        "RQB-2026-0455",
+        "RQB-2026-0341", "RQB-2026-0347", "RQB-2026-0349", "RQB-2026-0355",
+        "RQB-2026-0357", "RQB-2026-0364", "RQB-2026-0371", "RQB-2026-0401",
+        "RQB-2026-0422", "RQB-2026-0428", "RQB-2026-0444", "RQB-2026-0455",
     }
     flagship = store.get_case(bankdb.ALERT_ID)
     assert flagship["customer_name"] == "Al Rashidi Trading FZE"
@@ -141,10 +142,35 @@ def test_reset_demo_reopens_resolved_cases_and_preserves_history(screened_cases)
     assert reopened["status"] == "open"
     assert reopened["alert_status"] == "open"
     assert store.get_case("RQB-2026-0357")["status"] == "open"
-    # History is preserved — the reset rewinds status only, it deletes nothing.
+    # Case notes and the lifecycle audit survive the reset (only investigation
+    # state is cleared, and these cases had none).
     assert any(note["text"] == "keep this note" for note in reopened["notes"])
     # Idempotent: with the queue already open, a second reset reopens nothing.
     assert store.reset_demo(actor_role="rule_admin") == {"reopened": [], "reopened_count": 0}
+
+
+def test_reset_demo_clears_investigation_so_a_case_can_run_again(screened_cases, golden_sar):
+    case_id = "RQB-2026-0347"
+    run = store.start_run(case_id, "live", "analyst")  # -> investigating
+    store.append_event(case_id, "tool_call", {"name": "query_bank_ledger"}, run_id=run["id"])
+    store.save_sar(case_id, golden_sar, actor_role="analyst")
+    store.add_note(case_id, "keep this audit note", "analyst")
+    store.transition_case(case_id, "closed", "handled", "analyst")
+    assert store.get_case(case_id)["latest_run"] is not None
+
+    store.reset_demo(actor_role="rule_admin")
+
+    fresh = store.get_case(case_id)
+    assert fresh["status"] == "open"
+    assert fresh["latest_run"] is None      # the run is gone
+    assert fresh["sar"] is None             # the SAR draft is gone
+    # Only audit events remain — no run-linked investigation stream.
+    events = store.list_events(case_id)
+    assert events and all(event["run_id"] is None for event in events)
+    assert any(event["type"] == "note_added" for event in events)
+    # A brand-new investigation can start.
+    again = store.start_run(case_id, "live", "analyst")
+    assert again["id"] != run["id"]
 
 
 def test_case_transitions_enforce_state_machine_and_separation_of_duties(screened_cases):

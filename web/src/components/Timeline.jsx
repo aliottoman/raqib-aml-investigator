@@ -242,6 +242,51 @@ function AgentAssessment({ text }) {
   return <div className="agent-copy">{blocks}</div>
 }
 
+const ACTIVITY_LABEL = {
+  query_bank_ledger: 'Querying the bank ledger',
+  search_aml_policy: 'Retrieving AML policy',
+  read_case_document: 'Reading a case document',
+  extract_document: 'Extracting a scanned document',
+  check_watchlist: 'Screening the internal watchlist',
+  screen_adverse_media: 'Screening adverse media',
+  enrich_counterparty_context: 'Enriching counterparty context',
+}
+
+function currentActivity(items, byId) {
+  // Most recent meaningful state, walking back from the newest event.
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]
+    if (it.kind === 'tool') {
+      const t = byId[it.id]
+      return t.result ? 'Reviewing evidence…' : `${ACTIVITY_LABEL[t.call.name] ?? t.call.name.replaceAll('_', ' ')}…`
+    }
+    if (it.kind === 'code') return 'Running calculations…'
+    if (it.kind === 'thinking') return 'Reasoning…'
+  }
+  return 'Starting the investigation…'
+}
+
+// A persistent, prominent status header for the investigation feed: it names the
+// active capability while running and makes the human-approval moment obvious.
+function StatusHeader({ items, byId, running }) {
+  const pending = items.some((it) => it.kind === 'tool' && byId[it.id].approval?.request && !byId[it.id].approval?.result)
+  if (!running && !pending) return null
+  const lastStep = [...items].reverse().find((it) => it.kind === 'step')?.e
+  const phase = lastStep?.label || `step ${lastStep?.n ?? 1}`
+  return (
+    <div className={`run-status ${pending ? 'approval' : 'running'}`} role="status" aria-live="polite">
+      <span className="run-status-ico">{pending ? '⏸' : <span className="spin" />}</span>
+      <div className="run-status-copy">
+        <strong>{pending ? 'Awaiting your approval' : currentActivity(items, byId)}</strong>
+        <small>{pending
+          ? 'Review the proposed SQL below, then approve or decline to continue.'
+          : `Governed investigation · ${phase}`}</small>
+      </div>
+    </div>
+  )
+}
+
+
 export default function Timeline({ events, running, engine, approve, caseData, onBack, embedded = false, canApprove = true }) {
   const endRef = useRef(null)
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [events])
@@ -302,6 +347,7 @@ export default function Timeline({ events, running, engine, approve, caseData, o
       </aside>}
 
       <div className="feed">
+        <StatusHeader items={items} byId={byId} running={running} />
         {items.map((it, i) => {
           const active = i === lastCardIdx
           if (it.kind === 'tool') {
@@ -355,9 +401,6 @@ export default function Timeline({ events, running, engine, approve, caseData, o
               return null
           }
         })}
-        {running && (
-          <div className="waiting"><span className="spin" /> Raqib is working…</div>
-        )}
         <div ref={endRef} />
       </div>
     </div>

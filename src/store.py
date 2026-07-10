@@ -544,14 +544,29 @@ def apply_bulk(case_ids: list[str], action: str, *, actor_role: str, owner: str 
             "updated_count": len(updated), "skipped_count": len(skipped)}
 
 
+def _clear_investigation(con: sqlite3.Connection, case_ids: list[str]) -> None:
+    """Delete investigation state (runs, run-linked events, approvals, SAR
+    drafts) for the given cases so each can be investigated from scratch. Case
+    notes and the lifecycle audit (case_events without a run_id) are preserved.
+    Children are deleted before parents to satisfy the foreign keys."""
+    if not case_ids:
+        return
+    marks = ",".join("?" * len(case_ids))
+    con.execute(f"DELETE FROM approvals WHERE case_id IN ({marks})", case_ids)
+    con.execute(f"DELETE FROM case_events WHERE case_id IN ({marks}) AND run_id IS NOT NULL", case_ids)
+    con.execute(f"DELETE FROM investigation_runs WHERE case_id IN ({marks})", case_ids)
+    con.execute(f"DELETE FROM sar_versions WHERE case_id IN ({marks})", case_ids)
+
+
 def reset_demo(actor_role: str) -> dict:
     """Demo control: rewind every case that has left the queue back to 'open'
-    so the flagship critical/high signals reappear for another walkthrough.
+    AND clear its investigation, so the flagship critical/high signals reappear
+    and each reopened case can be investigated again from scratch.
 
-    Only case and alert status is rewound. SAR revisions, case notes, and the
-    event history are preserved, and nothing here represents a regulatory
-    action. Reusing transition_case(force=True) keeps the alert-status mapping
-    and the audit event identical to a single manual reopen."""
+    Case notes and the lifecycle audit are preserved; the investigation stream,
+    runs, SQL approvals, and SAR drafts of reopened cases are removed. Nothing
+    here represents a regulatory action. Reusing transition_case(force=True)
+    keeps the alert-status mapping and audit event identical to a manual reopen."""
     ensure_schema()
     con = _connect(readonly=True)
     try:
@@ -562,8 +577,15 @@ def reset_demo(actor_role: str) -> dict:
         con.close()
     for case_id in ids:
         transition_case(case_id, "open",
-                        "Demo reset — case reopened to the active queue",
+                        "Demo reset — case reopened for a fresh investigation",
                         actor_role, force=True)
+    if ids:
+        con = _connect()
+        try:
+            _clear_investigation(con, ids)
+            con.commit()
+        finally:
+            con.close()
     return {"reopened": ids, "reopened_count": len(ids)}
 
 

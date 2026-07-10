@@ -64,8 +64,8 @@ def test_unknown_persona_is_rejected(api_client):
 @pytest.mark.parametrize("role", ["analyst", "rule_admin"])
 def test_authorized_roles_can_run_screening(api_client, role: str):
     result = _screen(api_client, role)
-    assert result["customers_scanned"] == 19
-    assert len(result["alerts"]) == 9
+    assert result["customers_scanned"] == 24
+    assert len(result["alerts"]) == 12
     assert result["run_id"].startswith("rr_")
 
 
@@ -78,7 +78,7 @@ def test_read_only_roles_cannot_run_screening(api_client, role: str):
 def test_case_routes_support_search_filtering_notes_and_event_cursors(api_client):
     _screen(api_client)
     cases = api_client.get("/api/cases").json()
-    assert cases["total"] == 9
+    assert cases["total"] == 12
 
     searched = api_client.get("/api/cases", params={"search": "rashidi"}).json()
     assert searched["total"] == 2  # one customer may have multiple rule-specific cases
@@ -148,6 +148,29 @@ def test_bulk_triage_validates_payload_and_gates_roles(api_client):
         assert forbidden.status_code == 403
 
 
+def test_case_document_extraction_showcase(api_client):
+    _screen(api_client)
+    # The flagship case has two customer documents on file.
+    docs = api_client.get(f"/api/cases/{bankdb.ALERT_ID}/documents").json()
+    assert {doc["name"] for doc in docs["documents"]} == {"kyc_profile", "wire_memo"}
+    assert docs["extraction_backend"] == "demo"
+
+    # Extracting the wire memo returns structured fields and flags the planted
+    # injection via the offline heuristic (layer 1b) — no OCI call.
+    memo = api_client.post(f"/api/cases/{bankdb.ALERT_ID}/documents/wire_memo/extract")
+    assert memo.status_code == 200, memo.text
+    memo = memo.json()
+    assert memo["backend"] == "demo" and memo["fields"]
+    assert memo["guardrail"]["injection_detected"] is True
+
+    kyc = api_client.post(f"/api/cases/{bankdb.ALERT_ID}/documents/kyc_profile/extract").json()
+    assert kyc["guardrail"]["injection_detected"] is False
+
+    # A non-flagship case has no bundled documents.
+    other = api_client.get("/api/cases/RQB-2026-0364/documents").json()
+    assert other["documents"] == []
+
+
 def test_rule_suggest_proposes_without_persisting(api_client):
     before = next(r for r in api_client.get("/api/rules").json()["rules"]
                   if r["rule_id"] == "CASH-VELOCITY-04")
@@ -208,7 +231,7 @@ def test_case_queue_filters_by_rule_and_owner(api_client):
         headers={"X-Raqib-Role": "analyst"},
     )
     by_rule = api_client.get("/api/cases", params={"rule": "WATCHLIST-PROX-01"}).json()
-    assert by_rule["total"] == 3
+    assert by_rule["total"] == 4
     assert {case["rule"] for case in by_rule["cases"]} == {"WATCHLIST-PROX-01"}
 
     by_owner = api_client.get("/api/cases", params={"owner": "Nadia"}).json()
@@ -223,9 +246,9 @@ def test_case_queue_filters_by_rule_and_owner(api_client):
 def test_triage_summary_aggregates_the_queue(api_client):
     _screen(api_client)
     triage = api_client.get("/api/triage").json()
-    assert triage["total"] == 9 and triage["active"] == 9
-    assert triage["by_rule"]["WATCHLIST-PROX-01"] == 3
-    assert triage["by_severity"]["critical"] == 2
+    assert triage["total"] == 12 and triage["active"] == 12
+    assert triage["by_rule"]["WATCHLIST-PROX-01"] == 4
+    assert triage["by_severity"]["critical"] == 4
     assert set(triage["by_status"]) == {"open"}
 
 
@@ -272,9 +295,9 @@ def test_overview_analytics_rules_and_architecture_have_stable_shapes(api_client
     architecture = api_client.get("/api/architecture").json()
 
     assert overview["principle"] == "Rules detect. AI investigates. Humans decide."
-    assert overview["metrics"]["active_cases"] == 9
-    assert analytics["summary"]["customers_monitored"] == 19
-    assert analytics["summary"]["transactions_monitored"] == 1079
+    assert overview["metrics"]["active_cases"] == 12
+    assert analytics["summary"]["customers_monitored"] == 24
+    assert analytics["summary"]["transactions_monitored"] == 1410
     assert len(rules["rules"]) == 4
     assert {node["status"] for node in architecture["current"]["nodes"]} == {"implemented"}
     assert {profile["id"] for profile in architecture["deployment_profiles"]} == {
@@ -300,7 +323,7 @@ def test_rule_admin_can_patch_and_simulate_without_persisting_candidate(api_clie
     )
     assert simulation.status_code == 200
     assert simulation.json()["persisted"] is False
-    assert simulation.json()["match_count"] == 2  # flagship 1017 + extension 1061
+    assert simulation.json()["match_count"] == 4  # flagship 1017 + extensions 1061/1101/1109
     assert simulation.json()["simulation_id"].startswith("rr_")
 
     persisted = next(

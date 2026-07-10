@@ -1,6 +1,68 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
+import { api } from '../api.js'
 
 const aed = (n) => `AED ${Math.round(Math.abs(n)).toLocaleString('en-US')}`
+
+// Structured result of running document extraction from the case Overview — the
+// offline showcase of the multimodal extract_document tool. Extracted fields are
+// evidence (still reconciled to the ledger during a real investigation); the
+// transcript is screened by the local prompt-injection heuristic (layer 1b).
+function ExtractionResult({ result }) {
+  const scan = result.guardrail ?? {}
+  return (
+    <div className="extraction-result">
+      <div className="eyebrow">{result.doc_type} · {Object.keys(result.fields ?? {}).length} fields · {result.backend} backend</div>
+      <table className="ledger">
+        <tbody>
+          {Object.entries(result.fields ?? {}).map(([key, value]) => (
+            <tr key={key}><td>{key.replace(/_/g, ' ')}</td><td>{String(value)}</td></tr>
+          ))}
+        </tbody>
+      </table>
+      <div className={`guard ${scan.injection_detected ? 'flagged' : 'clean'} slim`}>
+        {scan.injection_detected
+          ? <div>⚠ Prompt injection flagged · score {Number(scan.prompt_injection_score).toFixed(2)} · {scan.detector} (layer 1b)</div>
+          : <div>✓ Prompt-injection screen clean · local heuristic (layer 1b)</div>}
+      </div>
+      {scan.injection_detected && scan.flagged_excerpt && <div className="excerpt">{scan.flagged_excerpt}</div>}
+    </div>
+  )
+}
+
+function CaseDocuments({ caseId, role }) {
+  const [docs, setDocs] = useState(null)
+  const [result, setResult] = useState(null)
+  const [busy, setBusy] = useState(null)
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    setDocs(null); setResult(null); setError(null)
+    api(`/api/cases/${encodeURIComponent(caseId)}/documents`, { role })
+      .then((data) => setDocs(data.documents ?? [])).catch(() => setDocs([]))
+  }, [caseId, role])
+  const extract = async (name) => {
+    setBusy(name); setError(null)
+    try {
+      setResult(await api(`/api/cases/${encodeURIComponent(caseId)}/documents/${name}/extract`, { method: 'POST', role }))
+    } catch (e) { setError(e.message) } finally { setBusy(null) }
+  }
+  if (docs === null) return <div className="chart-note">Loading documents…</div>
+  if (!docs.length) return <div className="chart-note">No customer documents are on file for this case.</div>
+  return (
+    <>
+      {docs.map((doc) => (
+        <div className="doc-row" key={doc.name}>
+          <span className="name">{doc.label}</span>
+          <button className="btn ghost doc-extract" onClick={() => extract(doc.name)} disabled={busy === doc.name}
+            aria-label={`Extract ${doc.label}`}>
+            {busy === doc.name ? 'Extracting…' : 'Extract fields'}
+          </button>
+        </div>
+      ))}
+      {error && <div className="permission-hint danger" role="alert">{error}</div>}
+      {result && <ExtractionResult result={result} />}
+    </>
+  )
+}
 
 // Pure-SVG bar chart of the June cash deposits against the reporting threshold.
 function DepositChart({ deposits, threshold }) {
@@ -31,7 +93,7 @@ function DepositChart({ deposits, threshold }) {
   )
 }
 
-export default function Dossier({ caseData, engine, onStart, onBack, embedded = false, canInvestigate: permission = true }) {
+export default function Dossier({ caseData, engine, onStart, onBack, embedded = false, canInvestigate: permission = true, role = 'analyst' }) {
   const { alert, customer, threshold_aed, june_deposits, june_wires, is_flagship } = caseData
   const total = june_deposits.reduce((s, d) => s + d.amount_aed, 0)
   const canInvestigate = permission && (engine === 'live' || is_flagship)
@@ -68,9 +130,8 @@ export default function Dossier({ caseData, engine, onStart, onBack, embedded = 
         </section>
 
         <section className="card card-pad">
-          <div className="eyebrow">Case documents · customer-submitted</div>
-          <div className="doc-row"><span className="name">KYC profile</span><span className="chip plain">untrusted</span></div>
-          <div className="doc-row"><span className="name">Wire instruction memo (PO-8871)</span><span className="chip plain">untrusted</span></div>
+          <div className="eyebrow">Case documents · customer-submitted, untrusted</div>
+          <CaseDocuments caseId={alert.id} role={role} />
         </section>
       </div>
 

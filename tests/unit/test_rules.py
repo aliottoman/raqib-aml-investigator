@@ -17,13 +17,16 @@ pytestmark = pytest.mark.unit
 def test_flagship_screening_is_exact_and_explainable():
     result = rules.run_screening()
 
-    assert result["customers_scanned"] == 19
-    assert result["transactions_scanned"] == 1079
-    # The four curated cases keep their historical ids; the portfolio extension
-    # adds one more alert per rule family, sorted by severity then id.
+    assert result["customers_scanned"] == 24
+    assert result["transactions_scanned"] == 1410
+    # The four curated cases keep their historical ids; the portfolio extensions
+    # add more critical/high alerts, sorted by severity then id.
     assert [(a["id"], a["rule"], a["severity"]) for a in result["alerts"]] == [
+        ("RQB-2026-0341", "CASH-VELOCITY-04", "critical"),
         ("RQB-2026-0347", "CASH-VELOCITY-04", "critical"),
+        ("RQB-2026-0349", "CASH-VELOCITY-04", "critical"),
         ("RQB-2026-0401", "CASH-VELOCITY-04", "critical"),
+        ("RQB-2026-0355", "WATCHLIST-PROX-01", "high"),
         ("RQB-2026-0357", "WATCHLIST-PROX-01", "high"),
         ("RQB-2026-0422", "WATCHLIST-PROX-01", "high"),
         ("RQB-2026-0444", "WATCHLIST-PROX-01", "high"),
@@ -33,7 +36,7 @@ def test_flagship_screening_is_exact_and_explainable():
         ("RQB-2026-0455", "DORMANT-SPIKE-03", "low"),
     ]
 
-    cash = result["alerts"][0]
+    cash = next(a for a in result["alerts"] if a["id"] == bankdb.ALERT_ID)
     assert cash["customer_id"] == bankdb.CUSTOMER_ID
     assert {
         "deposits": 14,
@@ -59,7 +62,7 @@ def test_screening_is_idempotent_and_preserves_workflow_status():
 
     with closing(sqlite3.connect(config.DB_PATH)) as con:
         rows = con.execute("SELECT id, status FROM alerts ORDER BY id").fetchall()
-    assert len(rows) == 9
+    assert len(rows) == 12
     assert dict(rows)[bankdb.ALERT_ID] == "investigating"
 
 
