@@ -119,7 +119,8 @@ RULE_AUTHORING_ENABLED = _flag("RAQIB_RULE_AUTHORING_ENABLED", False)  # AI-assi
 MAX_AGENT_STEPS = 12                # hard ceiling on tool-loop iterations
 LIVE_TIMEOUT_S = 180                # per model call
 
-PORT = int(os.getenv("RAQIB_PORT", "8117"))
+# Hosts like Render inject PORT; RAQIB_PORT is the local override; 8117 default.
+PORT = int(os.getenv("PORT") or os.getenv("RAQIB_PORT") or "8117")
 
 # Explicit local origins keep the demo convenient without making credentialed
 # browser calls available to every site.  Deployments can provide a

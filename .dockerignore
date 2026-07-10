@@ -1,0 +1,24 @@
+# Keep the build context (and image) lean; the UI is rebuilt in the Node stage.
+.git
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+node_modules
+web/node_modules
+web/dist
+web/coverage
+.env
+.env.*
+!.env.example
+raqib_bank.db
+raqib_bank.db-shm
+raqib_bank.db-wal
+.DS_Store
+.claude
+output
+tmp
+tests
