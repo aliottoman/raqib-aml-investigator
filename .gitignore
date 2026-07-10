@@ -19,3 +19,8 @@ raqib_bank.db-shm
 raqib_bank.db-wal
 .DS_Store
 evals/.last_golden.json
+
+# Local tooling and generated artifacts (not part of the app)
+.claude/
+output/
+tmp/

@@ -6,10 +6,27 @@ from types import SimpleNamespace
 import pytest
 
 import config
-from src import bankdb, guardrails, knowledge, oci_clients, tools
+from src import agent, bankdb, guardrails, knowledge, oci_clients, schemas, tools
 
 
 pytestmark = pytest.mark.integration
+
+
+class _FakeResponses:
+    """Records calls and returns a fixed parsed result (extraction / suggestion)."""
+
+    def __init__(self, parsed):
+        self._parsed = parsed
+        self.calls: list = []
+
+    def parse(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(output_parsed=self._parsed)
+
+
+class _FakeParsePlatform:
+    def __init__(self, parsed):
+        self.responses = _FakeResponses(parsed)
 
 
 def test_policy_index_excludes_customer_evidence_and_correspondence():
@@ -195,6 +212,91 @@ def test_watchlist_search_escapes_quotes_and_finds_related_ubo():
 def test_unknown_tool_fails_closed():
     result = tools.dispatch("delete_case", {}, bankdb.CUSTOMER_ID)
     assert result == {"error": "Unknown tool: delete_case"}
+
+
+# --------------------------------------------------------------------------- #
+#  Phase 3 — multimodal extraction (Feature 1)
+# --------------------------------------------------------------------------- #
+def test_extract_document_demo_backend_transcribes_and_structures():
+    # Flags default off -> demo backend, credential-free.
+    assert config.extraction_backend() == "demo"
+    result = tools.extract_document("wire_memo", bankdb.CUSTOMER_ID)
+    assert result["backend"] == "demo"
+    assert result["doc_type"] == "wire authorization"
+    assert result["fields"]["document"] == "Customer wire authorization memo"
+    # The transcript IS the real (untrusted) document text, so the planted
+    # injection still reaches the agent's guardrail screen under 'text'.
+    assert result["text"] == tools.read_case_document("wire_memo", bankdb.CUSTOMER_ID)["text"]
+    assert "SYSTEM NOTE" in result["text"]
+
+
+def test_extract_document_reuses_document_access_guard():
+    wrong_customer = tools.extract_document("kyc_profile", 1009)
+    assert "error" in wrong_customer and "text" not in wrong_customer
+    escaped = tools.extract_document("../secret", bankdb.CUSTOMER_ID)
+    assert "error" in escaped and "text" not in escaped
+
+
+def test_extract_document_live_backend_uses_vision_parse(monkeypatch: pytest.MonkeyPatch):
+    parsed = schemas.ExtractedDocument(
+        doc_type="wire authorization",
+        fields={"amount_aed": "150000", "beneficiary": "Orbit Precious Metals DMCC"},
+        raw_text="Scanned wire authorization. Amount AED 150,000.")
+    fake = _FakeParsePlatform(parsed)
+    monkeypatch.setattr(config, "API_KEY", "k")
+    monkeypatch.setattr(config, "PROJECT_OCID", "p")
+    monkeypatch.setattr(config, "EXTRACTION_ENABLED", True)
+    monkeypatch.setattr(oci_clients, "platform", lambda: fake)
+
+    result = tools.extract_document("wire_memo", bankdb.CUSTOMER_ID)
+    assert result["backend"] == "oci"
+    assert result["fields"]["beneficiary"] == "Orbit Precious Metals DMCC"
+    assert result["text"] == "Scanned wire authorization. Amount AED 150,000."
+    assert fake.responses.calls[0]["model"] == config.VISION_MODEL
+
+
+# --------------------------------------------------------------------------- #
+#  Phase 3 — counterparty context enrichment (Feature 2)
+# --------------------------------------------------------------------------- #
+def test_enrich_counterparty_context_composes_watchlist_and_local_intel():
+    assert config.enrichment_backend() == "demo"
+    hit = tools.enrich_counterparty_context("Orbit Precious Metals DMCC")
+    assert hit["backend"] == "demo" and hit["untrusted"] is True
+    assert hit["adverse_media"]["citations"]  # local intel matched "orbit"
+    assert "Adverse-media coverage found" in hit["risk_factors"]
+
+    clean = tools.enrich_counterparty_context("Nujoom Events LLC")
+    assert clean["adverse_media"]["citations"] == []
+
+
+def test_enrich_counterparty_context_live_uses_web_search(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(config, "API_KEY", "k")
+    monkeypatch.setattr(config, "PROJECT_OCID", "p")
+    monkeypatch.setattr(config, "ENRICHMENT_ENABLED", True)
+    monkeypatch.setattr(tools, "screen_adverse_media",
+                        lambda name: {"summary": f"Live media on {name}.", "citations": ["https://x"]})
+    result = tools.enrich_counterparty_context("Orbit Precious Metals DMCC")
+    assert result["backend"] == "oci"
+    assert result["adverse_media"]["summary"].startswith("Live media")
+
+
+def test_tool_defs_advertises_optional_tools_only_when_enabled(monkeypatch: pytest.MonkeyPatch):
+    base = {tool["name"] for tool in tools.tool_defs()}
+    assert "extract_document" not in base and "enrich_counterparty_context" not in base
+    monkeypatch.setattr(config, "EXTRACTION_ENABLED", True)
+    monkeypatch.setattr(config, "ENRICHMENT_ENABLED", True)
+    enabled = {tool["name"] for tool in tools.tool_defs()}
+    assert {"extract_document", "enrich_counterparty_context"} <= enabled
+
+
+def test_untrusted_text_router_screens_exactly_the_untrusted_surfaces():
+    # The unified guardrail branch screens documents, extracted transcripts, and
+    # adverse-media summaries — but not trusted internal data like the watchlist.
+    assert agent._untrusted_text("read_case_document", {"text": "doc body"}) == "doc body"
+    assert agent._untrusted_text("extract_document", {"text": "scanned body"}) == "scanned body"
+    assert agent._untrusted_text(
+        "enrich_counterparty_context", {"adverse_media": {"summary": "media body"}}) == "media body"
+    assert agent._untrusted_text("check_watchlist", {"rows": []}) == ""
 
 
 def test_document_guardrail_keeps_worst_paragraph_and_flags_injection(

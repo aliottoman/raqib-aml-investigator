@@ -29,7 +29,7 @@ export const PERMISSIONS = {
   analyst: new Set(['screen', 'investigate', 'approve_sql', 'note', 'transition', 'edit_sar', 'submit_sar']),
   reviewer: new Set(['note', 'transition', 'review_sar']),
   auditor: new Set(),
-  rule_admin: new Set(['screen', 'edit_rule', 'simulate_rule', 'reset_demo']),
+  rule_admin: new Set(['screen', 'edit_rule', 'simulate_rule', 'suggest_rule', 'reset_demo']),
 }
 
 export function can(role, permission) {

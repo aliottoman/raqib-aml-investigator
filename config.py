@@ -82,6 +82,10 @@ ORCHESTRATOR_MODEL = os.getenv("RAQIB_ORCHESTRATOR_MODEL", "xai.grok-4.20-reason
 SAR_MODEL = os.getenv("RAQIB_SAR_MODEL", "xai.grok-4.20-multi-agent-0309")  # structured parse
 WEB_SEARCH_MODEL = os.getenv("RAQIB_WEB_SEARCH_MODEL", "xai.grok-4.20-reasoning")
 EMBED_MODEL = os.getenv("RAQIB_EMBED_MODEL", "cohere.embed-multilingual-v3.0")
+# Multimodal extraction (Phase 3). Grok-4 is vision-capable, so this defaults to
+# the orchestrator; override for a dedicated vision model. Suggestion reuses
+# SAR_MODEL (structured parse) and enrichment reuses WEB_SEARCH_MODEL.
+VISION_MODEL = os.getenv("RAQIB_VISION_MODEL", ORCHESTRATOR_MODEL)
 
 # --------------------------------------------------------------------------- #
 #  Feature flags / tuning
@@ -102,6 +106,15 @@ USE_MANAGED_VECTOR_STORES = _flag("RAQIB_USE_MANAGED_VECTOR_STORES", False)
 # the managed backend provisions one on first use and caches its id.
 VECTOR_STORE_ID = os.getenv("RAQIB_VECTOR_STORE_ID", "")
 VECTOR_STORE_NAME = os.getenv("RAQIB_VECTOR_STORE_NAME", "raqib-aml-policy")
+
+# Phase 3 investigation upgrades. Each is opt-in AND still requires live
+# credentials to reach OCI, so demo mode and the test suite never call out.
+# When enabled without credentials, each falls back to a deterministic local
+# path behind the same contract (see extraction_backend / enrichment_backend /
+# rule_authoring_backend below).
+EXTRACTION_ENABLED = _flag("RAQIB_EXTRACTION_ENABLED", False)       # multimodal doc extraction
+ENRICHMENT_ENABLED = _flag("RAQIB_ENRICHMENT_ENABLED", False)       # counterparty context enrichment
+RULE_AUTHORING_ENABLED = _flag("RAQIB_RULE_AUTHORING_ENABLED", False)  # AI-assisted rule suggestions
 
 MAX_AGENT_STEPS = 12                # hard ceiling on tool-loop iterations
 LIVE_TIMEOUT_S = 180                # per model call
@@ -136,3 +149,17 @@ def guardrails_configured() -> bool:
 def retrieval_backend() -> str:
     """Which policy-retrieval backend search_aml_policy uses."""
     return "managed" if USE_MANAGED_VECTOR_STORES else "local"
+
+
+# Phase 3 backend selectors. "oci" means a live model/tool call; the local
+# alternative is deterministic and credential-free so demo mode stays portable.
+def extraction_backend() -> str:
+    return "oci" if EXTRACTION_ENABLED and live_configured() else "demo"
+
+
+def enrichment_backend() -> str:
+    return "oci" if ENRICHMENT_ENABLED and live_configured() else "demo"
+
+
+def rule_authoring_backend() -> str:
+    return "oci" if RULE_AUTHORING_ENABLED and live_configured() else "heuristic"

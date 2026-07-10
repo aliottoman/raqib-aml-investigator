@@ -78,6 +78,37 @@ class ApprovalDecision(BaseModel):
     call_id: str | None = None
 
 
+class ExtractedDocument(BaseModel):
+    """Structured result of multimodal extraction (Phase 3, Feature 1).
+
+    Used as the `responses.parse` text_format for the vision backend. `fields`
+    is the structured read; `raw_text` is the full untrusted transcription that
+    still gets prompt-injection screened before the agent sees it."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    doc_type: str = Field(min_length=1, description="e.g. 'wire authorization', 'KYC form'")
+    fields: dict[str, str] = Field(default_factory=dict, description="Structured field -> value")
+    raw_text: str = Field(default="", description="Full transcribed text (untrusted)")
+
+
+class RuleParameterSuggestion(BaseModel):
+    """`responses.parse` text_format for the rule-authoring backend (Feature 3).
+
+    The model only proposes; the deterministic, human-approved config stays the
+    source of truth. Suggested parameters are re-validated against the rule's
+    real keys/types before anything is returned."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    parameters: dict[str, Any] = Field(description="Proposed values for existing rule parameters")
+    rationale: str = Field(min_length=1, description="Short, plain rationale for the change")
+
+
+class RuleSuggestion(BaseModel):
+    """Request body for POST /api/rules/{id}/suggest — the analyst's authoring intent."""
+    intent: str = Field(min_length=1, max_length=500,
+                        description="e.g. 'tighten for rising smurfing typology in Q3'")
+
+
 class BulkTriage(BaseModel):
     """One triage action applied across many cases from the queue."""
     case_ids: list[str] = Field(min_length=1, max_length=200)

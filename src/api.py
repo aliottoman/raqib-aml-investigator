@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 import config
 from src import bankdb, runs, store
 from src.schemas import (ApprovalDecision, BulkTriage, CaseTransition, NoteCreate,
-                         RuleSimulation, RuleUpdate, SARReview, ev)
+                         RuleSimulation, RuleSuggestion, RuleUpdate, SARReview, ev)
 
 
 @asynccontextmanager
@@ -147,6 +147,9 @@ def health() -> dict:
         "region": config.REGION,
         "persistence": "sqlite",
         "retrieval": config.retrieval_backend(),
+        "extraction": config.extraction_backend(),
+        "enrichment": config.enrichment_backend(),
+        "rule_authoring": config.rule_authoring_backend(),
         "auth_mode": "simulated_personas",
     }
 
@@ -467,6 +470,23 @@ def simulate_rule(rule_id: str, body: RuleSimulation | None = None,
         f"{abs(delta)} {'more' if delta > 0 else 'fewer'} alert{'s' if abs(delta) != 1 else ''} than baseline"
     )
     return result
+
+
+@app.post("/api/rules/{rule_id}/suggest")
+def suggest_rule(rule_id: str, body: RuleSuggestion,
+                 role: str = Depends(require_roles("rule_admin"))) -> dict:
+    """AI-assisted authoring: propose deterministic parameters for a rule. The
+    model only suggests — nothing is persisted and rule_configs is untouched.
+    The Rule Administrator still simulates and saves (AI suggests, human decides)."""
+    from src import authoring
+    try:
+        suggestion = authoring.suggest_rule_parameters(rule_id, body.intent)
+    except KeyError as exc:
+        raise HTTPException(404, f"Unknown rule: {rule_id}") from exc
+    # Audit the suggestion as a non-mutating rule run (no version bump).
+    store.record_rule_run(rule_id, "suggestion", suggestion["suggested_parameters"],
+                          {"backend": suggestion["backend"]}, role)
+    return suggestion
 
 
 @app.get("/api/cases/{case_id}/sar")

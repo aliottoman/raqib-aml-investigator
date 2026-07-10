@@ -7,6 +7,8 @@ const TOOL_META = {
   read_case_document: { icon: 'document', tone: 'accent', title: 'Case file', sub: 'screened by OCI Guardrails on read' },
   check_watchlist: { icon: 'watchlist', tone: 'crimson', title: 'Internal watchlist', sub: 'entity + related-party screening' },
   screen_adverse_media: { icon: 'search', tone: 'accent', title: 'Adverse media', sub: 'xAI web_search · server-side tool' },
+  extract_document: { icon: 'document', tone: 'accent', title: 'Document extraction', sub: 'multimodal read · screened by OCI Guardrails' },
+  enrich_counterparty_context: { icon: 'search', tone: 'crimson', title: 'Counterparty context', sub: 'watchlist + adverse media · untrusted, screened' },
 }
 
 const CAPS = [
@@ -15,6 +17,8 @@ const CAPS = [
   ['search_aml_policy', 'Policy retrieval'],
   ['check_watchlist', 'Watchlist screening'],
   ['screen_adverse_media', 'Live web search'],
+  ['extract_document', 'Document extraction'],
+  ['enrich_counterparty_context', 'Context enrichment'],
   ['code', 'Code interpreter'],
   ['guardrail', 'AI Guardrails'],
   ['sar', 'Structured SAR'],
@@ -31,6 +35,8 @@ function outcome(call, result, approval) {
     case 'search_aml_policy': return [r.passages?.[0]?.section ?? 'no match', 'ok']
     case 'screen_adverse_media': return [/no credible|no significant|not find/i.test(r.summary ?? '') ? 'no adverse media found' : 'findings — expand', 'ok']
     case 'read_case_document': return [`${(r.text ?? '').length.toLocaleString()} chars read`, 'ok']
+    case 'extract_document': return [`${Object.keys(r.fields ?? {}).length} fields extracted`, 'ok']
+    case 'enrich_counterparty_context': return r.risk_factors?.length ? [`${r.risk_factors.length} risk factor(s)`, 'hit'] : ['no adverse context', 'ok']
     default: return ['done', 'ok']
   }
 }
@@ -88,8 +94,8 @@ function ToolCard({ call, result, approval, approve, engine, active, canApprove 
             </>
           )}
           {call.name === 'search_aml_policy' && <div className="purpose">query: “{call.args.query}”</div>}
-          {call.name === 'read_case_document' && <div className="purpose">document: {call.args.name}</div>}
-          {(call.name === 'check_watchlist' || call.name === 'screen_adverse_media') && (
+          {(call.name === 'read_case_document' || call.name === 'extract_document') && <div className="purpose">document: {call.args.name}</div>}
+          {(call.name === 'check_watchlist' || call.name === 'screen_adverse_media' || call.name === 'enrich_counterparty_context') && (
             <div className="purpose">entity: “{call.args.entity_name}”</div>
           )}
 
@@ -126,6 +132,41 @@ function ToolCard({ call, result, approval, approve, engine, active, canApprove 
           )}
           {result && call.name === 'read_case_document' && result.result.error && (
             <div className="chip plain">{result.result.error}</div>
+          )}
+          {result && call.name === 'extract_document' && !result.result.error && (
+            <>
+              <div className="chip plain">{result.result.doc_type} · {Object.keys(result.result.fields ?? {}).length} fields · {(result.result.text ?? '').length.toLocaleString()} chars (untrusted)</div>
+              {Object.entries(result.result.fields ?? {}).length > 0 && (
+                <div style={{ overflowX: 'auto', marginTop: '0.6rem' }}>
+                  <table className="ledger">
+                    <tbody>
+                      {Object.entries(result.result.fields).map(([k, v]) => (
+                        <tr key={k}><td>{k.replace(/_/g, ' ')}</td><td>{String(v)}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+          {result && call.name === 'extract_document' && result.result.error && (
+            <div className="chip plain">{result.result.error}</div>
+          )}
+          {result && call.name === 'enrich_counterparty_context' && !result.result.error && (
+            <>
+              {(result.result.risk_factors ?? []).length > 0 && (
+                <div className="citations">{result.result.risk_factors.map((f, i) => <span key={i} className="chip crimson">{f}</span>)}</div>
+              )}
+              {result.result.adverse_media?.summary && (
+                <div style={{ fontSize: '0.87rem', whiteSpace: 'pre-wrap', marginTop: '0.4rem' }}>{result.result.adverse_media.summary}</div>
+              )}
+              {(result.result.adverse_media?.citations ?? []).length > 0 && (
+                <div className="citations">
+                  {result.result.adverse_media.citations.map((u, i) => <a key={i} href={u} target="_blank" rel="noreferrer">{u.replace(/^https?:\/\//, '')}</a>)}
+                </div>
+              )}
+              <RowsTable result={result.result.watchlist} />
+            </>
           )}
         </div>
       )}

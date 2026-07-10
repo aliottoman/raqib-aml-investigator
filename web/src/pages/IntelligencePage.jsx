@@ -88,12 +88,15 @@ function Analytics({ data, period, setPeriod }) {
 function RuleDrawer({ rule, role, onClose, onUpdated }) {
   const [candidate, setCandidate] = useState({ ...(rule.parameters ?? {}) })
   const [simulation, setSimulation] = useState(null)
+  const [intent, setIntent] = useState('')
+  const [suggestion, setSuggestion] = useState(null)
   const [working, setWorking] = useState(null)
   const [error, setError] = useState(null)
   const drawerRef = useRef(null)
   const closeRef = useRef(null)
   const editable = can(role, 'edit_rule')
-  useEffect(() => { setCandidate({ ...(rule.parameters ?? {}) }); setSimulation(null); setError(null) }, [rule])
+  const canSuggest = can(role, 'suggest_rule')
+  useEffect(() => { setCandidate({ ...(rule.parameters ?? {}) }); setSimulation(null); setIntent(''); setSuggestion(null); setError(null) }, [rule])
   useEffect(() => {
     const previous = document.activeElement
     closeRef.current?.focus()
@@ -130,6 +133,18 @@ function RuleDrawer({ rule, role, onClose, onUpdated }) {
     try { await api(`/api/rules/${encodeURIComponent(rule.id)}`, { method: 'PATCH', body: { parameters: candidate }, role }); onUpdated('Rule parameters saved and versioned.'); onClose() }
     catch (e) { setError(e.message) } finally { setWorking(null) }
   }
+  // AI suggests candidate parameters; it never saves. The result pre-fills the
+  // editable fields so the admin still simulates and saves deliberately.
+  const suggest = async () => {
+    setWorking('suggest'); setError(null)
+    try {
+      const result = await api(`/api/rules/${encodeURIComponent(rule.id)}/suggest`, { method: 'POST', body: { intent }, role })
+      setSuggestion(result)
+      // Functional update: merge onto the latest candidate so a manual edit made
+      // while the request was in flight is not clobbered by the stale closure.
+      if (Object.keys(result.suggested_parameters ?? {}).length) { setCandidate((prev) => ({ ...prev, ...result.suggested_parameters })); setSimulation(null) }
+    } catch (e) { setError(e.message) } finally { setWorking(null) }
+  }
   return (
     <div className="drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <aside ref={drawerRef} className="rule-drawer" role="dialog" aria-modal="true" aria-labelledby="rule-title" aria-describedby="rule-description">
@@ -137,6 +152,25 @@ function RuleDrawer({ rule, role, onClose, onUpdated }) {
         <div className="drawer-scroll">
           <section><div className="eyebrow">Detection intent</div><p id="rule-description">{rule.description}</p><div className="rule-meta"><span>Category<strong>{rule.category ?? 'Behaviour monitoring'}</strong></span><span>Type<strong>Deterministic SQL</strong></span><span>State<strong>{rule.enabled ? 'Enabled' : 'Disabled'}</strong></span></div></section>
           <section><div className="eyebrow">Parameters</div><div className="parameter-grid">{Object.entries(candidate).map(([key, value]) => <label key={key}><span>{key.replaceAll('_', ' ')}</span><input type={typeof value === 'number' ? 'number' : 'text'} value={value} disabled={!editable} onChange={(e) => setCandidate({ ...candidate, [key]: typeof value === 'number' ? Number(e.target.value) : e.target.value })} /></label>)}</div></section>
+          {canSuggest && (
+            <section className="authoring-assist">
+              <div className="eyebrow">AI authoring assist · suggests, never saves</div>
+              <textarea value={intent} maxLength={500} disabled={!!working} aria-label="Authoring intent"
+                onChange={(e) => setIntent(e.target.value)}
+                placeholder="Describe the intent, e.g. 'tighten for a rising smurfing typology this quarter'" />
+              <button className="btn ghost" onClick={suggest} disabled={!intent.trim() || !!working}>
+                {working === 'suggest' ? <Spinner label="Thinking" /> : 'Suggest parameters (AI)'}
+              </button>
+              {suggestion && (
+                <p className="assist-note" role="status">
+                  <strong>{suggestion.backend === 'oci' ? 'AI suggestion' : 'Heuristic suggestion'}:</strong> {suggestion.rationale}
+                  {Object.keys(suggestion.suggested_parameters ?? {}).length
+                    ? ' Applied to the fields above — not saved. Simulate, then save to keep.'
+                    : ' No parameter change proposed.'}
+                </p>
+              )}
+            </section>
+          )}
           {!editable && <PermissionHint>Rule parameters are read-only for this persona. Switch to <strong>Rule Administrator</strong> to simulate changes.</PermissionHint>}
           {error && <div className="permission-hint danger" role="alert">{error}</div>}
           {simulation && <section className="simulation-result"><div className="eyebrow">Simulation result · no changes persisted</div><div><span><small>Baseline alerts</small><strong>{simulation.baseline?.alert_count ?? simulation.baseline?.match_count ?? simulation.baseline_alerts ?? '—'}</strong></span><span className="arrow">→</span><span><small>Candidate alerts</small><strong>{simulation.candidate?.alert_count ?? simulation.candidate?.match_count ?? simulation.candidate_alerts ?? simulation.match_count ?? '—'}</strong></span><span><small>Change</small><strong>{simulation.delta?.alert_count ?? simulation.delta?.match_count ?? simulation.delta ?? simulation.alert_delta ?? '—'}</strong></span></div><p>{simulation.summary ?? 'Candidate parameters were evaluated against the synthetic ledger.'}</p></section>}

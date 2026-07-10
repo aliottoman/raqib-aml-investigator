@@ -148,6 +148,36 @@ def test_bulk_triage_validates_payload_and_gates_roles(api_client):
         assert forbidden.status_code == 403
 
 
+def test_rule_suggest_proposes_without_persisting(api_client):
+    before = next(r for r in api_client.get("/api/rules").json()["rules"]
+                  if r["rule_id"] == "CASH-VELOCITY-04")
+    resp = api_client.post(
+        "/api/rules/CASH-VELOCITY-04/suggest",
+        json={"intent": "tighten for a rising smurfing typology this quarter"},
+        headers={"X-Raqib-Role": "rule_admin"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["backend"] == "heuristic"
+    assert set(body["suggested_parameters"]).issubset(before["parameters"])
+    # The suggestion is advisory only — the persisted rule is untouched.
+    after = next(r for r in api_client.get("/api/rules").json()["rules"]
+                 if r["rule_id"] == "CASH-VELOCITY-04")
+    assert after["version"] == before["version"]
+    assert after["parameters"] == before["parameters"]
+    # Unknown rule -> 404.
+    unknown = api_client.post("/api/rules/NO-SUCH/suggest",
+                              json={"intent": "tighten"}, headers={"X-Raqib-Role": "rule_admin"})
+    assert unknown.status_code == 404
+
+
+def test_health_reports_phase3_backends_offline(api_client):
+    health = api_client.get("/api/health").json()
+    assert health["extraction"] == "demo"
+    assert health["enrichment"] == "demo"
+    assert health["rule_authoring"] == "heuristic"
+
+
 def test_demo_reset_reopens_cases_and_is_rule_admin_only(api_client):
     _screen(api_client)
     closed = api_client.post(

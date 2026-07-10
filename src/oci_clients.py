@@ -2,7 +2,12 @@
 Raqib — lazy singletons for the three OCI access paths.
 
 * platform()   OpenAI SDK on /openai/v1          -> agent loop, conversations,
-                                                    code_interpreter, parse.
+                                                    code_interpreter, parse, and
+                                                    multimodal extraction (vision).
+                                                    Phase 3 adds no new auth path:
+                                                    extraction + rule suggestions
+                                                    reuse this client; enrichment
+                                                    reuses xai_tools().
 * xai_tools()  OpenAI SDK on /20231130/actions/v1 -> xAI web_search (only
                                                     served on this base).
 * inference()  native OCI SDK client              -> ApplyGuardrails + embeddings

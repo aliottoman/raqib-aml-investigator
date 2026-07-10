@@ -34,6 +34,16 @@ def test_cors_allows_local_ui_but_not_arbitrary_origins(api_client):
     assert "access-control-allow-origin" not in attacker.headers
 
 
+@pytest.mark.parametrize("role", ["analyst", "reviewer", "auditor"])
+def test_rule_suggest_is_rule_admin_only(api_client, role: str):
+    forbidden = api_client.post(
+        "/api/rules/CASH-VELOCITY-04/suggest",
+        json={"intent": "tighten"},
+        headers={"X-Raqib-Role": role},
+    )
+    assert forbidden.status_code == 403
+
+
 def test_spa_cannot_escape_build_directory_or_shadow_unknown_api_routes(tmp_path):
     dist = tmp_path / "web" / "dist"
     (dist / "assets").mkdir(parents=True)
