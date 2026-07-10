@@ -37,6 +37,38 @@ def test_seed_is_deterministic_and_contains_flagship_facts(tmp_path: Path):
     assert (first_day, last_day) == ("2026-06-08", "2026-06-18")
 
 
+def test_ensure_db_rebuilds_when_ledger_seed_version_is_stale():
+    from src import rules, store
+    # Build realistic product state so sqlite_sequence + product tables exist —
+    # a naive "drop every table" reset would choke on the sqlite_sequence table.
+    rules.run_screening()
+    store.list_cases()
+    store.add_note("RQB-2026-0347", "state to be reset", "analyst")
+    with closing(sqlite3.connect(config.DB_PATH)) as con:
+        tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"sqlite_sequence", "case_notes"} <= tables
+        # Simulate an older seed with fewer customers and a stale user_version.
+        con.execute("PRAGMA user_version = 1")
+        con.execute("DELETE FROM customers WHERE id != 1017")
+        con.commit()
+
+    bankdb.ensure_db()  # detects the stale seed and rebuilds from scratch
+
+    with closing(sqlite3.connect(config.DB_PATH)) as con:
+        assert con.execute("PRAGMA user_version").fetchone()[0] == bankdb.SCHEMA_VERSION
+        assert con.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 24
+
+
+def test_ensure_db_keeps_a_current_seed_database():
+    with closing(sqlite3.connect(config.DB_PATH)) as con:
+        con.execute("INSERT INTO customers VALUES "
+                    "(9999,'Sentinel LLC','LLC','AE','Low',100000,'2020-01-01','marker')")
+        con.commit()
+    bankdb.ensure_db()  # matches the current seed version -> no rebuild
+    with closing(sqlite3.connect(config.DB_PATH)) as con:
+        assert con.execute("SELECT COUNT(*) FROM customers WHERE id=9999").fetchone()[0] == 1
+
+
 @pytest.mark.parametrize(
     "sql, message",
     [

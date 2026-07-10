@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 
 import config
 
-SCHEMA_VERSION = 3  # deterministic ledger seed version; never auto-destructively migrated
+SCHEMA_VERSION = 4  # deterministic ledger seed version; bump when the seed changes
 
 CUSTOMER_ID = 1017              # the flagship case subject
 ALERT_ID = "RQB-2026-0347"      # the taped investigation
@@ -336,33 +336,55 @@ def build(path=None) -> None:
     con.close()
 
 
-def ensure_db() -> None:
-    """Build the demo ledger once, without destroying existing case state.
+def _reset() -> None:
+    """Drop every table (ledger + product) and reseed the ledger from scratch.
+    Product tables are recreated on demand by store.ensure_schema()."""
+    con = sqlite3.connect(str(config.DB_PATH))
+    try:
+        names = [r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
+        if names:
+            con.executescript("".join(f"DROP TABLE IF EXISTS {n};" for n in names))
+            con.commit()
+    finally:
+        con.close()
+    build()
 
-    Earlier versions rebuilt the whole file whenever ``user_version``
-    changed.  The application now stores investigation history in the same
-    SQLite file, so migrations must be additive.  A database containing the
-    five ledger tables is therefore kept as-is; an incomplete database is
-    surfaced clearly rather than silently erased.
+
+def ensure_db() -> None:
+    """Ensure the demo database exists and matches the current synthetic seed.
+
+    Ordinary product-schema migrations are additive and preserve case state
+    (see store.ensure_schema). The synthetic *ledger* seed is versioned
+    separately via ``user_version``: when it changes — e.g. new customers are
+    added — the derived case state is stale, so the file is rebuilt from
+    scratch and a one-line notice is printed. A file that already matches the
+    current seed is kept as-is; an incomplete one is surfaced clearly.
     """
     if not config.DB_PATH.exists():
         build()
         return
     con = sqlite3.connect(str(config.DB_PATH))
     try:
+        version = con.execute("PRAGMA user_version").fetchone()[0]
         tables = {r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     finally:
         con.close()
-    required = {"customers", "accounts", "transactions", "alerts", "watchlist"}
-    if required.issubset(tables):
-        return
     if not tables:
         build()
         return
-    missing = ", ".join(sorted(required - tables))
-    raise RuntimeError(f"Raqib database is incomplete; missing ledger table(s): {missing}")
+    if version < SCHEMA_VERSION:
+        # The synthetic ledger changed since this file was built; the case state
+        # derived from the old ledger is stale, so reset and reseed the file.
+        print(f"Raqib: rebuilding the demo database — synthetic ledger updated "
+              f"(seed v{version} → v{SCHEMA_VERSION}); local case/investigation state is reset.")
+        _reset()
+        return
+    required = {"customers", "accounts", "transactions", "alerts", "watchlist"}
+    if not required.issubset(tables):
+        missing = ", ".join(sorted(required - tables))
+        raise RuntimeError(f"Raqib database is incomplete; missing ledger table(s): {missing}")
 
 
 def execute_readonly(sql: str, max_rows: int = 50) -> dict:
