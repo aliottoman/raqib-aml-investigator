@@ -211,18 +211,6 @@ python app.py
 
 `OPENAI_API_KEY_CHICAGO` and `CHICAGO_PROJECT_OCID` retain their original names even if `RAQIB_REGION` points to another supported region. Never commit `.env`. Live investigations can incur OCI usage and the adverse-media tool can create public-web egress.
 
-**Deploy Publicly (Free, Recorded Mode)**
-
-The repository ships a `Dockerfile` and a `render.yaml` blueprint so the recorded-mode workbench can be hosted for free on a container platform (e.g. [Render](https://render.com)'s free web-service tier). Because `app.py` already serves the built UI, it deploys as a **single service** — no separate frontend host, no cross-origin configuration, and the live investigation WebSocket works over `wss://`.
-
-1. Push this repository to GitHub.
-2. On Render, create a **Blueprint** from the repo (it reads `render.yaml`) or a **Web Service** with the **Docker** runtime. No environment variables are required.
-3. Open the assigned URL. With no OCI credentials, the instance identifies itself as **Recorded mode**: screening, the expanded case queue, the maker-checker SAR workflow, rule administration, the demo reset, and the document-extraction showcase are all fully interactive; the flagship investigation replays the recorded run.
-
-Free-tier notes: the service sleeps after inactivity (first request cold-starts in ~50s), and its disk is ephemeral, so the synthetic SQLite database rebuilds from its deterministic seed on each restart (case state is per-uptime). This is intended for a synthetic demo.
-
-**Security — credentials stay local.** The public instance never asks for OCI credentials and must not be given them: Raqib uses credentials server-side and process-wide, so a shared host is the wrong place to custody anyone's keys. To investigate live with your own OCI account, run Raqib **locally** with your own `.env` (above) — credentials never leave your machine. Hosting a *private* live instance would additionally require an OCI SDK config for Guardrails and access protection so strangers cannot spend your quota.
-
 **Run the Backend Test Suite**
 
 ```bash
